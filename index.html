@@ -1,0 +1,1580 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>彥翔教室座位安排工具</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/default.css">
+    <script src="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/index.min.js"></script>
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            MobileDragDrop.polyfill({ holdToDrag: 200 }); // 長按 200 毫秒即可拖曳
+            window.addEventListener('touchmove', function() {}, {passive: false});
+        });
+    </script>
+
+    <style>
+        body { font-family: sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
+        .tooltip { position: relative; }
+        @media (min-width: 768px) {
+            .tooltip:hover::after {
+                content: attr(title); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+                background: #1e293b; color: white; padding: 6px 10px; border-radius: 6px;
+                font-size: 12px; font-weight: bold; white-space: nowrap; z-index: 50; margin-bottom: 8px;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            }
+            .tooltip:hover::before {
+                content: ''; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+                border-width: 5px; border-style: solid; border-color: #1e293b transparent transparent transparent;
+                margin-bottom: -2px; z-index: 50;
+            }
+        }
+        @media print {
+            @page { size: landscape; margin: 0.5cm; }
+            body { background: white; }
+            body * { visibility: hidden; }
+            #print-area, #print-area * { visibility: visible; }
+            #print-area { 
+                position: absolute; left: 0; top: 0;
+                transform-origin: top left;
+                width: max-content;
+                padding: 0 !important;
+                margin: 0 !important;
+                box-shadow: none !important;
+            }
+        }
+        @keyframes bounceShort {
+            0%, 100% { transform: translate(-50%, 0); }
+            50% { transform: translate(-50%, -10px); }
+        }
+        .animate-bounce-short { animation: bounceShort 1s ease-in-out infinite; }
+        
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
+        
+        /* 手機端防選取與捲動優化 */
+        .prevent-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; }
+        .scroll-container { -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+        // ==========================================
+        // 🌟 請確認這裡是您最新部署的 Web App 網址 🌟
+        // ==========================================
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyQ_IGB5SQ2Eqt6mLTBCjesOtJEK-uKy8VDeQQrNPFaUMjgN_I8_BFQkR2l0bbfWqRn/exec";
+
+        // --- 1. 改寫為內建 SVG 的共用圖示元件 ---
+        const ICONS = {
+            'users': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+            'user': '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+            'lock': '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+            'alert-circle': '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+            'log-in': '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/>',
+            'loader': '<line x1="12" x2="12" y1="2" y2="6"/><line x1="12" x2="12" y1="18" y2="22"/><line x1="4.93" x2="7.76" y1="4.93" y2="7.76"/><line x1="16.24" x2="19.07" y1="16.24" y2="19.07"/><line x1="2" x2="6" y1="12" y2="12"/><line x1="18" x2="22" y1="12" y2="12"/><line x1="4.93" x2="7.76" y1="19.07" y2="16.24"/><line x1="16.24" x2="19.07" y1="7.76" y2="4.93"/>',
+            'settings': '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+            'grid-3x3': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/>',
+            'info': '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+            'check-circle': '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/>',
+            'alert-triangle': '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+            'arrow-right': '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+            'rotate-ccw': '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+            'users-round': '<path d="M18 21a8 8 0 0 0-16 0"/><circle cx="10" cy="8" r="5"/><path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3"/>',
+            'star': '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+            'link': '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+            'unlink': '<path d="m18.84 12.25 1.72-1.71h-.01a5.001 5.001 0 0 0-7.07-7.07l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.001 5.001 0 0 0 7.07 7.07l1.71-1.71"/><line x1="8" x2="8" y1="2" y2="5"/><line x1="2" x2="5" y1="8" y2="8"/><line x1="16" x2="16" y1="19" y2="22"/><line x1="19" x2="22" y1="16" y2="16"/>',
+            'check': '<path d="M20 6 9 17l-5-5"/>',
+            'map-pin': '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+            'eraser': '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
+            'edit-2': '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>',
+            'trash-2': '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+            'x': '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+            'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+            'wand-2': '<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/>',
+            'image': '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+            'printer': '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
+            'monitor': '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
+            'undo': '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>',
+            'redo': '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>',
+            'inbox': '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+            'grip-vertical': '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>',
+            'pin': '<line x1="12" x2="12" y1="17" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.68V6a3 3 0 1 0-6 0v4.68a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>',
+            'user-check': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>',
+            'cloud': '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+            'cloud-off': '<path d="M22.61 16.95A5 5 0 0 0 18 10h-1.26a8 8 0 0 0-7.05-6M5 5a8 8 0 0 0 4 15h9a5 5 0 0 0 1.7-.3M1 1l22 22"/>',
+            'save': '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
+            'upload': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+            'database': '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>',
+            'file-json': '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 10.5a1.5 1.5 0 0 0-3 0v3a1.5 1.5 0 0 1-3 0"/><path d="M14 16.5a1.5 1.5 0 0 0 3 0v-3a1.5 1.5 0 0 1 3 0"/>'
+        };
+
+        const Icon = ({ name, size = 24, className = '', color = 'currentColor', fill = 'none' }) => {
+            const svgContent = ICONS[name] || '';
+            return (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width={size}
+                    height={size}
+                    viewBox="0 0 24 24"
+                    fill={fill}
+                    stroke={color}
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={`lucide lucide-${name} ${className}`}
+                    dangerouslySetInnerHTML={{ __html: svgContent }}
+                />
+            );
+        };
+
+        // --- 2. 輔助函式庫 ---
+        const getSeatId = (r, c) => `r${r}c${c}`;
+        const parseSeatId = (id) => { const match = id.match(/r(\d+)c(\d+)/); return match ? { r: parseInt(match[1]), c: parseInt(match[2]) } : null; };
+        
+        const isStrictAdjacent = (id1, id2) => {
+            const s1 = parseSeatId(id1); const s2 = parseSeatId(id2);
+            if (!s1 || !s2) return false;
+            if (s1.r === s2.r && Math.abs(s1.c - s2.c) === 1) return true;
+            if (s1.c === s2.c && Math.abs(s1.r - s2.r) === 1) return true;
+            return false;
+        };
+        
+        const isGroupAdjacent = (id1, id2) => {
+            const s1 = parseSeatId(id1); const s2 = parseSeatId(id2);
+            if (!s1 || !s2) return false;
+            return Math.abs(s1.r - s2.r) <= 1 && Math.abs(s1.c - s2.c) <= 1;
+        };
+        
+        const shuffleArray = (array) => {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        };
+
+        // --- 3. 登入畫面 (Step 0) ---
+        const LoginScreen = ({ onLoginSuccess }) => {
+            const [teacherId, setTeacherId] = useState('');
+            const [pin, setPin] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+            const [errorMsg, setErrorMsg] = useState('');
+            const [rememberMe, setRememberMe] = useState(true);
+
+            useEffect(() => {
+                const savedId = localStorage.getItem('yk_seating_id');
+                const savedPin = localStorage.getItem('yk_seating_pin');
+                if (savedId && savedPin) { setTeacherId(savedId); setPin(savedPin); setRememberMe(true); }
+            }, []);
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                if (!teacherId || !pin) { setErrorMsg('請填寫帳號與密碼'); return; }
+                setIsLoading(true); setErrorMsg('');
+                try {
+                    const res = await fetch(SCRIPT_URL, { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({ action: 'login', teacherId, pin }) 
+                    });
+                    const data = await res.json();
+                    
+                    if (data.valid) {
+                        if (rememberMe) {
+                            localStorage.setItem('yk_seating_id', teacherId);
+                            localStorage.setItem('yk_seating_pin', pin);
+                        } else {
+                            localStorage.removeItem('yk_seating_id'); localStorage.removeItem('yk_seating_pin');
+                        }
+                        onLoginSuccess({ id: teacherId, pin: pin, name: data.name });
+                    } else {
+                        setErrorMsg(data.error || '登入失敗，請檢查代碼與密碼');
+                    }
+                } catch (err) { 
+                    setErrorMsg('網路連線異常，請確認網址是否正確且已發布新版 GAS'); 
+                } finally { setIsLoading(false); }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+                    <div className="bg-white p-6 md:p-12 rounded-3xl shadow-xl border border-slate-200 max-w-md w-full animate-[fadeIn_0.5s_ease-out]">
+                        <div className="w-20 h-20 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm">
+                            <Icon name="users" className="text-indigo-600" size={40} />
+                        </div>
+                        <h1 className="text-2xl md:text-3xl font-extrabold text-center text-slate-800 mb-2 tracking-tight">智慧教室座位安排</h1>
+                        <p className="text-center text-slate-500 mb-8 font-medium">請輸入教師專屬憑證進入系統</p>
+                        
+                        <form onSubmit={handleLogin} className="space-y-5">
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1.5 ml-1">教師代碼 (Teacher ID)</label>
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><Icon name="user" size={18} className="text-slate-400"/></div>
+                                    <input type="text" value={teacherId} onChange={e => setTeacherId(e.target.value)} className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-semibold text-base" placeholder="例如：T01" required />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1.5 ml-1">專屬密碼 (PIN)</label>
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><Icon name="lock" size={18} className="text-slate-400"/></div>
+                                    <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-semibold text-base" placeholder="請輸入密碼" required />
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center justify-between pt-1">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)} className="w-5 h-5 md:w-4 md:h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"/>
+                                    <span className="text-sm font-semibold text-slate-600">記住憑證</span>
+                                </label>
+                            </div>
+
+                            {errorMsg && <div className="bg-rose-50 text-rose-600 p-3 rounded-lg text-sm font-bold flex items-center gap-2"><Icon name="alert-circle" size={16}/> {errorMsg}</div>}
+
+                            <button type="submit" disabled={isLoading} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-lg shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:bg-slate-400">
+                                {isLoading ? <Icon name="loader" className="animate-spin" size={20}/> : <Icon name="log-in" size={20}/>}
+                                {isLoading ? '驗證中...' : '安全登入'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 4. 基礎設定畫面 (Step 1) ---
+        const Step1Setup = ({ rows, setRows, cols, setCols, frontRowsCount, setFrontRowsCount, unavailableSeats, toggleUnavailableSeat, rawRosterInput, handleRosterChange, rosterCount, totalAvailableSeats, onNext, enableCheckerboard, setEnableCheckerboard }) => {
+            const isCapacityEnough = totalAvailableSeats >= rosterCount;
+            return (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8 animate-[fadeIn_0.5s_ease-out]">
+                <div className="lg:col-span-4 space-y-6">
+                    <div className="bg-white p-5 md:p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-5 flex items-center gap-2"><Icon name="settings" className="text-indigo-500" size={20}/> 版面配置</h2>
+                    <div className="space-y-4 md:space-y-5">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-sm font-semibold text-slate-600 mb-1.5 block">總排數</label>
+                                <select value={rows} onChange={e => { setRows(parseInt(e.target.value)); if (frontRowsCount > e.target.value) setFrontRowsCount(e.target.value); }} className="w-full rounded-xl border-slate-300 shadow-sm py-2.5 px-3 focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-base md:text-sm text-slate-700 bg-slate-50 font-semibold">
+                                    {Array.from({ length: 20 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n} 排</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-sm font-semibold text-slate-600 mb-1.5 block">每排人數</label>
+                                <select value={cols} onChange={e => setCols(parseInt(e.target.value))} className="w-full rounded-xl border-slate-300 shadow-sm py-2.5 px-3 focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-base md:text-sm text-slate-700 bg-slate-50 font-semibold">
+                                    {Array.from({ length: 20 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n} 列</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="pt-2 border-t border-slate-100">
+                        <label className="text-sm font-semibold text-slate-600 mb-1.5 flex items-center justify-between">
+                            <span>前排定義</span>
+                            <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md font-bold">黃金座位區</span>
+                        </label>
+                        <select value={frontRowsCount} onChange={e => setFrontRowsCount(parseInt(e.target.value))} className="w-full rounded-xl border-slate-300 shadow-sm py-2.5 px-3 focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-base md:text-sm text-slate-700 bg-slate-50 font-semibold">
+                            <option value={0}>無特定前排需求</option>
+                            {Array.from({ length: rows + 1 }, (_, i) => i).filter(n => n > 0).map(n => <option key={n} value={n}>前 {n} 排視為前排</option>)}
+                        </select>
+                        </div>
+                        <div className="pt-2 border-t border-slate-100">
+                            <label className="flex items-center gap-2 cursor-pointer mt-2 group">
+                                <input type="checkbox" checked={enableCheckerboard} onChange={e => setEnableCheckerboard(e.target.checked)} className="w-6 h-6 md:w-5 md:h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer" />
+                                <span className="font-bold text-slate-700 group-hover:text-indigo-600 transition-colors flex items-center gap-1.5"><Icon name="grid-3x3" size={18}/>啟用男女交錯 (梅花座)</span>
+                            </label>
+                            <p className="text-xs text-slate-500 mt-1.5 ml-8 md:ml-7 leading-relaxed">開啟後盡力避免同性相鄰。名單後方需標註性別（<strong className="text-indigo-600">男/女/M/F</strong>）。</p>
+                        </div>
+                    </div>
+                    </div>
+
+                    <div className="bg-white p-5 md:p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col h-[350px] md:h-[400px]">
+                        <div className="flex justify-between items-center mb-3">
+                        <h2 className="text-lg md:text-xl font-bold text-slate-800 flex items-center gap-2"><Icon name="users" className="text-indigo-500" size={20}/> 學生名單</h2>
+                        <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2.5 py-1 rounded-lg">{rosterCount} 人</span>
+                        </div>
+                        <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-3 mb-3 text-xs text-indigo-800 leading-relaxed font-medium hidden md:block">
+                        <strong className="flex items-center gap-1 mb-1 text-indigo-700"><Icon name="info" size={14}/> 智慧解析格式：</strong>
+                        <p>依序輸入 <code className="bg-white px-1 py-0.5 rounded shadow-sm text-indigo-600">座號 姓名 性別</code>，系統將自動擷取。</p>
+                        </div>
+                        <textarea
+                        className="flex-grow w-full p-4 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-base md:text-sm font-mono leading-relaxed resize-none custom-scrollbar bg-slate-50"
+                        placeholder="請貼上名單，每行一位：&#10;01 王小明 男&#10;02 陳大華 M"
+                        value={rawRosterInput} onChange={handleRosterChange}
+                        ></textarea>
+                    </div>
+                </div>
+
+                <div className="lg:col-span-8 flex flex-col space-y-6">
+                    <div className="flex-grow bg-white p-4 md:p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 md:mb-6 gap-3">
+                            <div>
+                                <h3 className="text-lg md:text-xl font-bold text-slate-800">教室平面圖預覽</h3>
+                                <p className="text-xs md:text-sm text-slate-500 mt-1 font-medium">點擊下方網格，即可設定走道或障礙物</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 md:gap-3 text-[10px] md:text-xs font-medium text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-100 shadow-sm w-full sm:w-auto">
+                                <span className="flex items-center gap-1.5"><div className="w-3 md:w-3.5 h-3 md:h-3.5 bg-white border-2 border-slate-300 rounded-md"></div> 標準</span>
+                                <span className="flex items-center gap-1.5"><div className="w-3 md:w-3.5 h-3 md:h-3.5 bg-amber-50 border-2 border-amber-300 rounded-md"></div> 前排</span>
+                                <span className="flex items-center gap-1.5"><div className="w-3 md:w-3.5 h-3 md:h-3.5 bg-slate-300 border-2 border-slate-400 rounded-md"></div> 走道</span>
+                            </div>
+                        </div>
+                        
+                        <div className="flex-grow overflow-x-auto scroll-container custom-scrollbar bg-slate-50/50 rounded-xl p-2 md:p-8 border-2 border-dashed border-slate-200">
+                            <div className="min-w-max flex justify-center pb-4">
+                                <SeatingGrid rows={rows} cols={cols} frontRowsCount={frontRowsCount} unavailableSeats={unavailableSeats} mode="config" onSeatClick={toggleUnavailableSeat} />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className={`p-4 md:p-5 rounded-2xl border shadow-sm flex flex-col sm:flex-row justify-between items-center gap-4 transition-colors ${isCapacityEnough ? 'bg-white border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+                        <div className="flex items-center gap-3 md:gap-4 w-full sm:w-auto">
+                        <div className={`p-2 md:p-3 rounded-xl shadow-sm flex-shrink-0 ${isCapacityEnough ? 'bg-emerald-100 text-emerald-600 border border-emerald-200' : 'bg-rose-100 text-rose-600 border border-rose-200'}`}>
+                            {isCapacityEnough ? <Icon name="check-circle" size={24} /> : <Icon name="alert-triangle" size={24} />}
+                        </div>
+                        <div>
+                            <p className={`text-base md:text-lg font-bold ${isCapacityEnough ? 'text-slate-800' : 'text-rose-800'}`}>
+                                {isCapacityEnough ? '配置準備就緒' : '教室容量不足'}
+                            </p>
+                            <p className="text-xs md:text-sm text-slate-500 font-medium mt-0.5">名單 <strong className="text-slate-800">{rosterCount}</strong> 人 / 座位 <strong className="text-slate-800">{totalAvailableSeats}</strong> 個</p>
+                        </div>
+                        </div>
+                        <button onClick={onNext} disabled={!isCapacityEnough || rosterCount === 0} className="w-full sm:w-auto px-6 md:px-8 py-3.5 md:py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed shadow-md hover:shadow-lg text-base md:text-lg">
+                        進行第二步 <Icon name="arrow-right" size={20} />
+                        </button>
+                    </div>
+                </div>
+                </div>
+            );
+        };
+
+        // --- 5. 特殊條件設定畫面 (Step 2) ---
+        const Step2Constraints = ({ roster, fixedAssignments, frontRowPriorityStudents, activeConstraintMode, activeConstraintStudent, studentNumbers, studentGenders, enableCheckerboard, toggleFrontRowPriority, startConstraintMode, applyConstraintPair, openFixedSeatModal, clearFixedAssignment, clearAllStudentConstraints, removeStudentFromMustSit, removeStudentFromCannotSit, isInMustSitGroup, isInCannotSitPair, getMustSitPartners, getCannotSitPartners, onPrev, onGenerate, isGenerating, resetAllConstraints, totalAvailableSeats, frontAvailableSeats, frontRowsCount, fixedFrontCount, effectiveFrontAvailableSeats, unavailableSeats, batchMode, startBatchMode, batchSelection, toggleBatchSelection, applyBatchMode, cancelBatchMode, mustSitTogether, cannotSitTogether, handleRemoveFromMustGroup, handleDeleteMustGroup, handleDeleteCannotPair, editingBatch, editGroup }) => {
+            const listScrollRef = useRef(null);
+
+            const studentsFixedInFrontRow = useMemo(() => {
+                const students = new Set();
+                for (const [student, seatId] of Object.entries(fixedAssignments)) {
+                    const parsed = parseSeatId(seatId);
+                    if (parsed && parsed.r < frontRowsCount && !unavailableSeats.has(seatId)) students.add(student);
+                }
+                return students;
+            }, [fixedAssignments, frontRowsCount, unavailableSeats]);
+
+            const frontRowDemand = useMemo(() => {
+                let demand = 0;
+                frontRowPriorityStudents.forEach(student => { if (!studentsFixedInFrontRow.has(student)) demand++; });
+                return demand;
+            }, [frontRowPriorityStudents, studentsFixedInFrontRow]);
+
+            const isFrontRowOverloaded = frontRowDemand > effectiveFrontAvailableSeats;
+
+            const handleStudentClick = (student) => {
+                if (batchMode) { toggleBatchSelection(student); return; }
+                if (!activeConstraintMode) return;
+                if (activeConstraintStudent === student) startConstraintMode(null, null); 
+                else applyConstraintPair(student);
+            };
+
+            return (
+                <div className="animate-[fadeIn_0.5s_ease-out] max-w-[85rem] mx-auto pb-24 px-2 md:px-0 relative">
+                    <div className="mb-4 md:mb-6 bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
+                        <div className="flex flex-wrap items-center justify-center w-full md:w-auto gap-2 md:gap-3">
+                            <button onClick={resetAllConstraints} className="flex-1 md:flex-none flex items-center justify-center gap-1 text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-2.5 md:py-2 rounded-xl font-bold transition shadow-sm border border-rose-100 text-sm md:text-base"><Icon name="rotate-ccw" size={16} md:size={18} /> 清空</button>
+                            <div className="h-6 w-px bg-slate-200 hidden md:block"></div>
+                            <button onClick={() => startBatchMode('CANNOT_SIT')} disabled={enableCheckerboard || batchMode} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 text-rose-600 hover:bg-rose-50 px-2 md:px-3 py-2.5 md:py-2 rounded-xl font-bold transition disabled:opacity-30 disabled:hover:bg-transparent text-xs md:text-sm border border-rose-200 shadow-sm"><Icon name="users-round" size={16}/> 互斥群組</button>
+                            <button onClick={() => startBatchMode('MUST_SIT')} disabled={enableCheckerboard || batchMode} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 text-emerald-600 hover:bg-emerald-50 px-2 md:px-3 py-2.5 md:py-2 rounded-xl font-bold transition disabled:opacity-30 disabled:hover:bg-transparent text-xs md:text-sm border border-emerald-200 shadow-sm"><Icon name="users" size={16}/> 互助群組</button>
+                        </div>
+                        <div className="flex w-full md:w-auto items-center justify-center gap-3">
+                            <div className={`w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2.5 md:py-2 rounded-xl border text-sm font-bold shadow-sm ${isFrontRowOverloaded ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                                <Icon name="star" size={16} className={isFrontRowOverloaded ? 'text-rose-500' : 'text-amber-500'} /> 
+                                前排需求：{frontRowDemand} 
+                                <span className="text-xs font-semibold opacity-60 border-l border-slate-300 pl-2 ml-1">餘 {effectiveFrontAvailableSeats} 位</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {enableCheckerboard && (
+                        <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 md:p-4 rounded-xl mb-4 text-xs md:text-sm font-bold flex items-start sm:items-center gap-3 shadow-sm">
+                            <Icon name="alert-triangle" size={20} className="flex-shrink-0 text-amber-500 mt-0.5 sm:mt-0" />
+                            梅花座已啟動：暫停使用「同桌、避開」等群組功能。
+                        </div>
+                    )}
+
+                    {activeConstraintMode && !batchMode && (
+                        <div className={`mb-4 p-3 md:p-4 rounded-xl flex items-center justify-between text-xs md:text-sm font-bold shadow-md border ${activeConstraintMode === 'MUST_SIT' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-800 border-rose-300'}`}>
+                            <div className="flex items-center gap-2">
+                                <Icon name={activeConstraintMode === 'MUST_SIT' ? 'link' : 'unlink'} size={18} className="animate-pulse flex-shrink-0" />
+                                <span>正為「<span className="text-base">{activeConstraintStudent}</span>」尋找對象，請點擊下方名單。</span>
+                            </div>
+                            <button onClick={() => startConstraintMode(null, null)} className="flex items-center justify-center gap-1 px-3 py-2 bg-white/60 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-slate-300 flex-shrink-0">取消</button>
+                        </div>
+                    )}
+
+                    {batchMode && (
+                        <div className="fixed bottom-6 pb-[env(safe-area-inset-bottom)] left-1/2 -translate-x-1/2 z-50 w-[95%] max-w-md">
+                            <div className="bg-slate-800 text-white px-4 md:px-6 py-3 md:py-4 rounded-2xl shadow-2xl flex items-center gap-3 md:gap-6 animate-bounce-short border border-slate-700 justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-xl hidden md:block ${batchMode === 'MUST_SIT' ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]'}`}>
+                                        <Icon name={batchMode === 'MUST_SIT' ? 'users' : 'users-round'} size={20}/>
+                                    </div>
+                                    <div>
+                                        <div className="font-extrabold text-sm md:text-base leading-tight">{editingBatch ? '編輯' : '建立'} {batchMode === 'MUST_SIT' ? '互助群組' : '互斥名單'}</div>
+                                        <div className="text-slate-300 text-[10px] md:text-xs mt-1 font-medium">請點選名單，已選 <strong className="text-white text-sm md:text-lg">{batchSelection.size}</strong> 人</div>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={cancelBatchMode} className="px-3 md:px-4 py-2 md:py-2.5 bg-slate-700 hover:bg-slate-600 rounded-xl text-xs md:text-sm font-bold transition">取消</button>
+                                    <button onClick={applyBatchMode} disabled={batchSelection.size < 2} className="px-4 md:px-5 py-2 md:py-2.5 bg-indigo-500 hover:bg-indigo-400 disabled:bg-slate-600 disabled:text-slate-400 rounded-xl font-bold text-xs md:text-sm transition shadow-md whitespace-nowrap">確認</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className={`lg:col-span-2 bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col h-[55vh] md:h-[60vh] transition-all duration-300 ${batchMode ? 'border-indigo-400 ring-4 ring-indigo-50' : 'border-slate-200'}`}>
+                            <div className="flex bg-slate-50 px-4 py-3 border-b border-slate-200 z-10 items-center justify-between">
+                                <div className="text-sm font-extrabold text-slate-500 pl-1">學生列表</div>
+                                <div className="text-[10px] md:text-xs font-bold text-slate-400 tracking-widest hidden sm:flex gap-8 pr-2">
+                                    <span className="w-[140px] text-center">單人設定</span>
+                                    <span className="w-[155px] text-center">人際關聯</span>
+                                </div>
+                            </div>
+                            
+                            <div ref={listScrollRef} className="overflow-y-auto divide-y divide-slate-100/80 p-2 custom-scrollbar">
+                                {roster.map(student => {
+                                    const isFixed = fixedAssignments[student];
+                                    const isFront = frontRowPriorityStudents.has(student);
+                                    const inMustGroup = isInMustSitGroup(student);
+                                    const inCannotPair = isInCannotSitPair(student);
+                                    const isActiveMust = activeConstraintMode === 'MUST_SIT' && activeConstraintStudent === student;
+                                    const isActiveCannot = activeConstraintMode === 'CANNOT_SIT' && activeConstraintStudent === student;
+                                    const isBatchSelected = batchSelection.has(student);
+                                    const gender = studentGenders[student];
+                                    
+                                    const mustPartners = getMustSitPartners(student);
+                                    const cannotPartners = getCannotSitPartners(student);
+                                    
+                                    let highlightClasses = 'hover:bg-slate-50 ';
+                                    if (batchMode) {
+                                        if (isBatchSelected) highlightClasses = 'bg-indigo-50/80 border border-indigo-300 shadow-md z-10 scale-[1.01] rounded-xl ring-2 ring-indigo-500/30 cursor-pointer';
+                                        else highlightClasses = 'hover:bg-slate-100 cursor-pointer transition-colors opacity-60 hover:opacity-100';
+                                    } else if (activeConstraintMode) {
+                                        if (isActiveMust || isActiveCannot) highlightClasses = 'bg-indigo-50 border border-indigo-300 shadow-md z-10 scale-[1.02] rounded-xl ring-2 ring-indigo-500/50';
+                                        else if (activeConstraintMode === 'MUST_SIT' && getMustSitPartners(activeConstraintStudent).includes(student)) highlightClasses = 'bg-emerald-50 border border-emerald-300 rounded-xl ring-1 ring-emerald-500/50';
+                                        else if (activeConstraintMode === 'CANNOT_SIT' && getCannotSitPartners(activeConstraintStudent).includes(student)) highlightClasses = 'bg-rose-50 border border-rose-300 rounded-xl ring-1 ring-rose-500/50';
+                                        else highlightClasses = 'opacity-40 hover:opacity-100 hover:bg-slate-100 cursor-pointer transition-opacity'; 
+                                    }
+
+                                    let isFixedToBackRow = false;
+                                    if (isFixed) {
+                                        const p = parseSeatId(isFixed);
+                                        if (p && p.r >= frontRowsCount && !unavailableSeats.has(isFixed)) isFixedToBackRow = true;
+                                    }
+
+                                    return (
+                                    <div key={student} className={`flex flex-col sm:flex-row justify-between items-start sm:items-center px-3 py-3 md:px-4 md:py-3.5 transition-all duration-200 m-1 rounded-xl ${highlightClasses} ${activeConstraintMode || batchMode ? 'cursor-pointer prevent-select' : ''}`} onClick={() => handleStudentClick(student)}>
+                                        <div className="flex flex-col pointer-events-none mb-3 sm:mb-0 w-full sm:w-auto"> 
+                                            <div className="flex items-center justify-between w-full">
+                                                <span className="font-extrabold text-gray-900 text-base md:text-lg flex items-center gap-2">
+                                                    {batchMode && <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${isBatchSelected ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-slate-300 bg-white'}`}>{isBatchSelected && <Icon name="check" size={14} stroke-width="3"/>}</div>}
+                                                    {studentNumbers[student] && <span className="text-slate-400 text-xs md:text-sm font-bold bg-slate-100 px-1.5 py-0.5 rounded-md">{studentNumbers[student]}</span>}
+                                                    {student}
+                                                    {gender === 'M' && <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded shadow-sm border border-blue-200">男</span>}
+                                                    {gender === 'F' && <span className="text-[10px] bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded shadow-sm border border-pink-200">女</span>}
+                                                </span>
+                                            </div>
+                                            
+                                            <div className="flex flex-wrap gap-1.5 mt-2">
+                                                {isFixed && <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] md:text-xs rounded font-bold flex items-center gap-1 shadow-sm"><Icon name="map-pin" size={10}/>已指定 {isFixed}</span>}
+                                                {mustPartners.length > 0 && (
+                                                    <span className="px-1.5 py-0.5 bg-emerald-100/80 text-emerald-800 border border-emerald-200 text-[10px] md:text-xs rounded font-bold flex items-center gap-1 shadow-sm">
+                                                        <Icon name="link" size={10}/>相鄰 {mustPartners.join(', ')}
+                                                    </span>
+                                                )}
+                                                {cannotPartners.length > 0 && (
+                                                    <span className="px-1.5 py-0.5 bg-rose-100/80 text-rose-800 border border-rose-200 text-[10px] md:text-xs rounded font-bold flex items-center gap-1 shadow-sm">
+                                                        <Icon name="unlink" size={10}/>避開 {cannotPartners.join(', ')}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full sm:w-auto mt-1 sm:mt-0 pointer-events-auto">
+                                            <div className={`grid grid-cols-2 sm:flex bg-slate-100/80 p-1 rounded-xl border border-slate-200 shadow-sm w-full sm:w-[140px] gap-1 sm:gap-0 ${(activeConstraintMode || batchMode) ? 'pointer-events-none opacity-40 grayscale' : ''}`}>
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); if (isFixed) clearFixedAssignment(student); else openFixedSeatModal(student); }} 
+                                                    className={`flex items-center justify-center gap-1.5 py-3 sm:py-1 rounded-lg text-xs md:text-xs font-bold transition-all disabled:opacity-30 ${isFixed ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200' : 'text-slate-600 hover:bg-white hover:text-indigo-600'}`}
+                                                >
+                                                    <Icon name="map-pin" size={14} /> {isFixed ? isFixed : '指定'}
+                                                </button>
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); toggleFrontRowPriority(student); }} 
+                                                    disabled={activeConstraintMode || batchMode || isFixedToBackRow} 
+                                                    className={`flex items-center justify-center gap-1.5 py-3 sm:py-1 rounded-lg text-xs md:text-xs font-bold transition-all disabled:opacity-30 ${isFront ? 'bg-amber-400 text-white shadow-md shadow-amber-200' : 'text-slate-600 hover:bg-white hover:text-amber-600'}`}
+                                                >
+                                                    <Icon name="star" size={14} fill={isFront ? "currentColor" : "none"} /> 前排
+                                                </button>
+                                            </div>
+
+                                            <div className={`grid grid-cols-2 sm:flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm w-full sm:w-[155px] transition-all gap-1 sm:gap-0 ${(activeConstraintMode && activeConstraintStudent !== student) || batchMode ? 'pointer-events-none opacity-40 grayscale' : 'hover:shadow-md hover:border-slate-300'}`}>
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); if (isActiveMust) startConstraintMode(null, null); else if (activeConstraintMode) applyConstraintPair(student); else startConstraintMode('MUST_SIT', student); }} 
+                                                    disabled={enableCheckerboard} 
+                                                    className={`flex items-center justify-center gap-1.5 py-3 sm:py-1 rounded-lg text-xs font-black tracking-wide transition-all disabled:opacity-30 relative overflow-hidden group
+                                                        ${isActiveMust ? 'bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow-[0_4px_10px_rgba(16,185,129,0.3)]' 
+                                                        : inMustGroup ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                                                        : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
+                                                >
+                                                    {isActiveMust && <span className="absolute inset-0 bg-white/20 animate-pulse rounded-lg"></span>}
+                                                    <Icon name="link" size={14} /> 相鄰
+                                                </button>
+
+                                                <div className="w-[1px] bg-slate-100 hidden sm:block mx-0.5"></div>
+
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); if (isActiveCannot) startConstraintMode(null, null); else if (activeConstraintMode) applyConstraintPair(student); else startConstraintMode('CANNOT_SIT', student); }} 
+                                                    disabled={enableCheckerboard} 
+                                                    className={`flex items-center justify-center gap-1.5 py-3 sm:py-1 rounded-lg text-xs font-black tracking-wide transition-all disabled:opacity-30 relative overflow-hidden group
+                                                        ${isActiveCannot ? 'bg-gradient-to-br from-rose-400 to-rose-600 text-white shadow-[0_4px_10px_rgba(225,29,72,0.3)]' 
+                                                        : inCannotPair ? 'bg-rose-50 text-rose-700 border border-rose-200' 
+                                                        : 'text-slate-400 hover:bg-rose-50 hover:text-rose-600'}`}
+                                                >
+                                                    {isActiveCannot && <span className="absolute inset-0 bg-white/20 animate-pulse rounded-lg"></span>}
+                                                    <Icon name="unlink" size={14} /> 避開
+                                                </button>
+                                            </div>
+
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); clearAllStudentConstraints(student); }} 
+                                                disabled={activeConstraintMode || batchMode} 
+                                                className="flex sm:hidden items-center justify-center w-full py-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 hover:text-rose-500 hover:bg-rose-50 font-bold text-xs transition-colors gap-2"
+                                            >
+                                                <Icon name="eraser" size={14} /> 清除此生條件
+                                            </button>
+                                            
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); clearAllStudentConstraints(student); }} 
+                                                disabled={activeConstraintMode || batchMode} 
+                                                className="hidden sm:flex items-center justify-center w-9 h-9 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 hover:bg-rose-50 hover:text-rose-500 hover:border-rose-200 transition-all disabled:opacity-30 tooltip flex-shrink-0"
+                                                title="清除該生所有條件"
+                                            >
+                                                <Icon name="eraser" size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-auto md:h-[60vh] mt-4 lg:mt-0">
+                            <div className="flex bg-slate-50 px-4 py-3 border-b border-slate-200 z-10 items-center justify-between">
+                                <div className="text-sm font-extrabold text-slate-500">群組設定總覽</div>
+                            </div>
+                            <div className="overflow-y-auto p-4 md:p-5 space-y-6 custom-scrollbar bg-slate-50/30 flex-grow min-h-[300px]">
+                                
+                                <div>
+                                    <h4 className="text-sm font-black text-emerald-700 mb-3 flex items-center gap-1.5"><Icon name="users" size={18}/> 互助群組 <span className="text-[10px] bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-600 font-bold">嚴格相鄰</span></h4>
+                                    {mustSitTogether.length === 0 ? (
+                                        <div className="text-xs text-slate-400 font-medium bg-white p-4 rounded-xl border border-slate-100 text-center border-dashed">尚未建立任何互助群組</div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {mustSitTogether.map((group, gIdx) => (
+                                                <div key={gIdx} className="bg-white border-2 border-emerald-100 rounded-xl p-3 shadow-sm flex flex-col gap-2 hover:border-emerald-300 transition-colors">
+                                                    <div className="flex justify-between items-center border-b border-emerald-50 pb-2">
+                                                        <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md">群組 {gIdx + 1}</span>
+                                                        <div className="flex gap-1 md:gap-2">
+                                                            <button onClick={() => editGroup('MUST_SIT', gIdx, group)} className="px-3 py-1.5 md:px-2 md:py-1 text-emerald-600 bg-emerald-50 hover:bg-emerald-500 hover:text-white rounded-lg transition text-[11px] md:text-xs font-bold flex items-center gap-1"><Icon name="edit-2" size={14} md:size={12}/> 編輯</button>
+                                                            <button onClick={() => handleDeleteMustGroup(gIdx)} className="px-3 py-1.5 md:px-2 md:py-1 text-rose-600 bg-rose-50 hover:bg-rose-500 hover:text-white rounded-lg transition text-[11px] md:text-xs font-bold flex items-center gap-1"><Icon name="trash-2" size={14} md:size={12}/> 刪除</button>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-1.5 pt-1">
+                                                        {group.map((student, sIdx) => (
+                                                            <span key={sIdx} className="bg-white border border-emerald-200 text-emerald-800 text-[11px] md:text-xs font-bold px-2 md:px-1.5 py-1.5 md:py-1 rounded-lg shadow-sm flex items-center gap-1">
+                                                                {student}
+                                                                <button onClick={() => handleRemoveFromMustGroup(gIdx, student)} className="text-emerald-400 hover:text-rose-500 hover:bg-rose-50 rounded transition-colors p-1 md:p-0.5"><Icon name="x" size={14}/></button>
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="h-px w-full bg-slate-200"></div>
+
+                                <div>
+                                    <h4 className="text-sm font-black text-rose-700 mb-3 flex items-center gap-1.5"><Icon name="users-round" size={18}/> 互斥名單 <span className="text-[10px] bg-rose-100 px-1.5 py-0.5 rounded text-rose-600 font-bold">絕對不相鄰</span></h4>
+                                    {cannotSitTogether.length === 0 ? (
+                                        <div className="text-xs text-slate-400 font-medium bg-white p-4 rounded-xl border border-slate-100 text-center border-dashed">尚未建立任何互斥名單</div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {cannotSitTogether.map((pair, pIdx) => (
+                                                <div key={pIdx} className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-white border-2 border-rose-100 rounded-xl p-3 md:p-2.5 shadow-sm gap-2 hover:border-rose-300 transition-colors">
+                                                    <div className="flex items-center gap-2 text-sm font-bold text-rose-700 w-full sm:w-auto justify-center sm:justify-start">
+                                                        <span className="bg-rose-50 px-3 py-1.5 rounded-md border border-rose-100">{pair[0]}</span>
+                                                        <Icon name="x" size={14} className="text-rose-400"/>
+                                                        <span className="bg-rose-50 px-3 py-1.5 rounded-md border border-rose-100">{pair[1]}</span>
+                                                    </div>
+                                                    <div className="flex gap-1 md:gap-2 w-full sm:w-auto justify-center sm:justify-end mt-2 sm:mt-0">
+                                                        <button onClick={() => editGroup('CANNOT_SIT', pIdx, pair)} className="px-4 sm:px-2 py-2 sm:py-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-500 hover:text-white rounded-md transition text-xs font-bold flex items-center gap-1"><Icon name="edit-2" size={14} md:size={12}/> 編輯</button>
+                                                        <button onClick={() => handleDeleteCannotPair(pIdx)} className="px-4 sm:px-2 py-2 sm:py-1 text-rose-600 bg-rose-50 hover:bg-rose-500 hover:text-white rounded-md transition text-xs font-bold flex items-center gap-1"><Icon name="trash-2" size={14} md:size={12}/> 刪除</button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                <div className="mt-6 md:mt-8 flex justify-center gap-3 flex-col sm:flex-row">
+                    <button onClick={onPrev} className="px-6 py-4 md:py-3.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-2xl font-bold text-base md:text-lg shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2">
+                        <Icon name="arrow-left" size={20} /> 上一步修改
+                    </button>
+                    <button onClick={onGenerate} disabled={!!activeConstraintMode || !!batchMode || isGenerating} className="px-8 py-4 md:py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-extrabold text-lg md:text-xl shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all disabled:bg-slate-400 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-3 flex-grow max-w-md">
+                        {isGenerating ? <Icon name="loader" size={24} className="animate-spin" /> : <Icon name="wand-2" size={24} />} 
+                        {isGenerating ? '運算中，請稍候...' : '啟動排座演算法'}
+                    </button>
+                </div>
+                </div>
+            );
+        };
+
+        // --- 6. 結果與微調畫面 (Step 3) ---
+        const Step3Results = ({ rows, cols, frontRowsCount, unavailableSeats, seatingChart, holdingStudents, manualViolations, seatViolationsMap, studentNumbers, lockedSeats, handleToggleLock, handleDragStart, handleDragOver, handleSeatDrop, handleHoldingZoneDrop, historyIndex, historyLength, undo, redo, onPrev, onReset, onGenerateLocked, fixedAssignments, isPrintMode, setIsPrintMode, isGenerating }) => {
+            const hasUnplaced = holdingStudents.length > 0;
+            const hasViolations = manualViolations.length > 0;
+            
+            const handleDownloadImage = async () => {
+                const element = document.getElementById('print-area');
+                if (!element) return;
+                
+                try {
+                    const canvas = await html2canvas(element, { 
+                        backgroundColor: '#ffffff', 
+                        scale: 2, 
+                        useCORS: true 
+                    });
+                    const dataUrl = canvas.toDataURL('image/png');
+                    const link = document.createElement('a'); 
+                    link.download = `教室座位表_${new Date().toLocaleDateString().replace(/\//g, '')}.png`; 
+                    link.href = dataUrl; 
+                    link.click();
+                } catch (error) { 
+                    alert('下載圖片失敗，請稍後再試。'); 
+                }
+            };
+
+            if (isPrintMode) {
+                return (
+                    <div className="fixed inset-0 z-50 bg-slate-100 overflow-auto font-sans flex justify-center scroll-container custom-scrollbar">
+                        <div className="w-full min-w-fit max-w-[100vw] flex flex-col items-center p-4 md:p-8">
+                            <div className="w-full flex flex-col sm:flex-row justify-between items-center mb-6 border-b border-slate-200 pb-4 print:hidden bg-white p-4 rounded-xl shadow-sm gap-4 sticky top-0 z-10">
+                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Icon name="monitor" className="text-indigo-600"/> 匯出預覽模式</h2>
+                                <div className="flex flex-wrap gap-2">
+                                    <button onClick={handleDownloadImage} className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl font-bold shadow-md hover:bg-emerald-700 transition flex items-center gap-2 text-sm"><Icon name="image" size={16}/> 下載圖片</button>
+                                    <button onClick={() => window.print()} className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl font-bold shadow-md hover:bg-indigo-700 transition flex items-center gap-2 text-sm"><Icon name="printer" size={16}/> 列印</button>
+                                    <button onClick={() => setIsPrintMode(false)} className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition border border-slate-300 text-sm">離開預覽</button>
+                                </div>
+                            </div>
+                            <div id="print-area" className="bg-white p-6 md:p-12 rounded-xl shadow-sm min-w-max relative shrink-0">
+                                <h1 className="text-2xl md:text-3xl font-black text-center mb-8 md:mb-10 print:block hidden tracking-widest">教室座位表</h1>
+                                <SeatingGrid rows={rows} cols={cols} frontRowsCount={frontRowsCount} unavailableSeats={unavailableSeats} mode="view" seatingChart={seatingChart} seatViolationsMap={seatViolationsMap} lockedSeats={lockedSeats} isPrintMode={true} studentNumbers={studentNumbers} fixedAssignments={fixedAssignments} />
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="animate-[fadeIn_0.5s_ease-out] space-y-6 px-2 md:px-0">
+                <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm ${hasUnplaced || hasViolations ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
+                    <div className="flex items-start gap-3">
+                            <div className={`p-2 md:p-3 rounded-full flex-shrink-0 shadow-inner ${hasUnplaced || hasViolations ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                                {hasUnplaced || hasViolations ? <Icon name="alert-triangle" size={24} /> : <Icon name="check-circle" size={24} />}
+                            </div>
+                            <div>
+                                <h3 className={`font-bold text-base md:text-lg leading-tight ${hasUnplaced || hasViolations ? 'text-amber-800' : 'text-emerald-800'}`}>
+                                    {hasUnplaced ? '部分學生在暫存區' : (hasViolations ? '存在座位條件衝突' : '完美！無任何衝突')}
+                                </h3>
+                                {hasViolations && (
+                                    <ul className="mt-2 list-disc list-inside text-xs md:text-sm font-bold space-y-1 text-red-600 bg-red-50/50 p-2 rounded-lg border border-red-100">
+                                    {manualViolations.map((v, i) => <li key={i}>{v}</li>)}
+                                    </ul>
+                                )}
+                            <p className="mt-1 md:mt-2 text-xs md:text-sm font-semibold opacity-80 flex flex-wrap items-center gap-1 text-gray-700">
+                                <Icon name="info" size={14} className="flex-shrink-0"/> 長按座位可拖曳交換學生，或放回暫存區。點擊左上角可鎖定。
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <button onClick={onPrev} className="flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-4 py-3 sm:py-2.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-700 hover:bg-slate-50 shadow-sm transition text-sm"><Icon name="arrow-left" size={16}/> 返回</button>
+                        <button onClick={() => setIsPrintMode(true)} className="flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-4 py-3 sm:py-2.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-sm transition text-sm"><Icon name="printer" size={16}/> 匯出列印</button>
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden flex flex-col relative z-10">
+                        <div className="bg-slate-50 border-b border-slate-200 p-3 flex flex-wrap md:flex-nowrap justify-between items-center z-20 gap-3">
+                            <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
+                                <button onClick={undo} disabled={historyIndex <= 0} className="p-2 md:p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition tooltip" title="復原上一手"><Icon name="undo" size={20}/></button>
+                                <div className="w-px h-5 bg-slate-200"></div>
+                                <button onClick={redo} disabled={historyIndex >= historyLength - 1} className="p-2 md:p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:hover:bg-transparent rounded-md transition tooltip" title="重做"><Icon name="redo" size={20}/></button>
+                            </div>
+                            <button onClick={onGenerateLocked} disabled={isGenerating} className="flex-1 md:flex-none justify-center px-4 py-3 md:py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-lg shadow-sm transition text-sm md:text-sm font-bold flex items-center gap-2 disabled:opacity-50">
+                            {isGenerating ? <Icon name="loader" size={18} className="animate-spin" /> : <Icon name="wand-2" size={18}/>}
+                            {isGenerating ? '重排中...' : '保留鎖定，其餘重排'}
+                        </button>
+                    </div>
+                    
+                    <div className="p-4 md:p-10 pb-0 flex flex-col z-10 relative">
+                        <div className={`mb-4 md:mb-6 p-4 rounded-xl border-2 border-dashed transition-all flex flex-wrap gap-2 items-center min-h-[90px] ${hasUnplaced ? 'bg-amber-50 border-amber-300 shadow-inner' : 'bg-slate-50 border-slate-300'}`}
+                            onDragOver={handleDragOver}
+                            onDrop={handleHoldingZoneDrop}
+                        >
+                            <div className="w-full text-sm font-bold text-slate-500 mb-2 flex items-center gap-1.5"><Icon name="inbox" size={18}/> 學生暫存區</div>
+                            {holdingStudents.length === 0 && <div className="text-sm text-slate-400 w-full text-center py-2 italic font-semibold">目前暫存區為空。</div>}
+                            {holdingStudents.map((student, idx) => (
+                                <div key={student}
+                                    draggable
+                                    onDragStart={(e) => handleDragStart(e, student, null, idx)}
+                                    className="bg-white border-2 border-slate-300 shadow-md px-4 py-2 rounded-xl cursor-grab active:cursor-grabbing font-bold text-sm md:text-base text-slate-700 hover:border-indigo-400 hover:text-indigo-700 transition-all flex items-center hover:-translate-y-0.5 prevent-select touch-manipulation"
+                                >
+                                    {studentNumbers[student] && <span className="text-slate-400 text-[11px] md:text-xs mr-1.5">{studentNumbers[student]}</span>}
+                                    {student}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div id="seating-chart-area" className="p-4 md:p-10 pt-2 scroll-container overflow-x-auto min-h-[400px] md:min-h-[500px] relative z-0 custom-scrollbar w-full" style={{backgroundImage: 'radial-gradient(#e5e7eb 1px, transparent 1px)', backgroundSize: '20px 20px'}}>
+                        <div className="min-w-max flex justify-center pb-8 px-4">
+                            <SeatingGrid rows={rows} cols={cols} frontRowsCount={frontRowsCount} unavailableSeats={unavailableSeats} mode="view" seatingChart={seatingChart} seatViolationsMap={seatViolationsMap} lockedSeats={lockedSeats} onToggleLock={handleToggleLock} studentNumbers={studentNumbers} onDragStart={handleDragStart} onDragOver={handleDragOver} onDrop={handleSeatDrop} fixedAssignments={fixedAssignments} />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex justify-center pt-4">
+                    <button onClick={onReset} className="flex items-center gap-2 px-6 py-3.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 rounded-xl font-bold transition shadow-sm text-sm"><Icon name="rotate-ccw" size={18}/> 清除重來</button>
+                </div>
+                </div>
+            );
+        };
+
+        // --- 7. 網格繪製元件 ---
+        const SeatingGrid = ({ rows, cols, frontRowsCount, unavailableSeats, mode, onSeatClick, fixedAssignments = {}, seatingChart = {}, seatViolationsMap = {}, lockedSeats = new Set(), onToggleLock, studentNumbers = {}, isPrintMode = false, onDragStart, onDragOver, onDrop }) => {
+            const gridStyle = { display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(${isPrintMode ? '90px' : '65px'}, 1fr))`, gap: isPrintMode ? '0px' : '0.5rem', maxWidth: '100%' };
+            const Podium = () => (
+                <div className={`col-span-full flex justify-center ${isPrintMode ? 'mb-12 mt-4' : 'mb-8'}`}>
+                <div className={`${isPrintMode ? 'border-2 border-black text-black px-24 py-4 rounded-lg bg-white text-xl font-black' : 'bg-slate-800 text-white px-16 md:px-24 py-2.5 rounded-b-2xl shadow-lg text-sm md:text-base font-bold tracking-[0.5em]'} uppercase`}>講 台</div>
+                </div>
+            );
+
+            const getFixedStudentForSeat = (seatId) => {
+                for (const [student, id] of Object.entries(fixedAssignments)) { if (id === seatId) return student; }
+                return null;
+            }
+
+            const seats = [];
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const seatId = getSeatId(r, c);
+                    const isUnavailable = unavailableSeats.has(seatId);
+                    const isFrontRow = r < frontRowsCount;
+                    
+                    let studentName = null;
+                    if (mode === 'view') studentName = seatingChart[seatId];
+                    else studentName = getFixedStudentForSeat(seatId);
+
+                    const violations = seatViolationsMap[seatId] || [];
+                    const hasViolation = violations.length > 0 && mode === 'view';
+                    const isLocked = lockedSeats.has(seatId);
+
+                    let seatClasses = `flex flex-col items-center justify-center p-1 md:p-2 text-center relative group w-full h-full prevent-select `;
+                    let clickHandler = () => {};
+                    let draggable = false;
+
+                    if (isPrintMode) {
+                        seatClasses += `border-2 border-slate-900 bg-white min-h-[80px] md:min-h-[90px] ${isUnavailable ? 'bg-slate-200' : ''} `;
+                    } else {
+                        seatClasses += `aspect-[4/3] rounded-xl transition-all duration-300 border-b-[3px] md:border-b-4 border-2 `;
+                        
+                        if (hasViolation) {
+                            seatClasses += 'border-rose-500 border-b-rose-600 bg-rose-50 shadow-[0_0_15px_rgba(225,29,72,0.4)] z-10 animate-pulse ';
+                        } else if (mode === 'config') {
+                            seatClasses += isUnavailable ? "bg-slate-300 border-slate-400 border-b-slate-500 text-slate-500 cursor-pointer" : (isFrontRow ? "bg-amber-50 border-amber-300 border-b-amber-400 hover:bg-amber-100 cursor-pointer shadow-sm" : "bg-white border-slate-300 border-b-slate-400 hover:bg-slate-50 cursor-pointer shadow-sm");
+                            clickHandler = () => onSeatClick(r, c);
+                        } else if (mode === 'select-fixed') {
+                            if (isUnavailable) seatClasses += "bg-slate-200 border-slate-300 cursor-not-allowed opacity-50";
+                            else if (studentName) seatClasses += "bg-indigo-100 border-indigo-300 border-b-indigo-400 cursor-not-allowed opacity-90"; 
+                            else {
+                                seatClasses += isFrontRow ? "bg-amber-50 border-amber-300 border-b-amber-400 hover:bg-indigo-50 hover:border-indigo-400 hover:border-b-indigo-500 cursor-pointer shadow-sm" : "bg-white border-slate-300 border-b-slate-400 hover:bg-indigo-50 hover:border-indigo-400 hover:border-b-indigo-500 cursor-pointer shadow-sm";
+                                clickHandler = () => onSeatClick(seatId);
+                            }
+                        } else if (mode === 'view') {
+                            if (isUnavailable) seatClasses += "bg-slate-200/50 border-slate-300 border-b-0 opacity-40";
+                            else if (studentName) {
+                                if (!hasViolation) seatClasses += isFrontRow ? "bg-amber-50/80 border-amber-300 border-b-amber-400 shadow-md hover:shadow-lg backdrop-blur-sm " : "bg-white border-slate-300 border-b-slate-400 shadow-md hover:shadow-lg ";
+                                if (!isLocked) { draggable = true; seatClasses += "cursor-grab active:cursor-grabbing hover:-translate-y-1 touch-manipulation "; }
+                                else seatClasses += "cursor-default border-slate-400 border-b-slate-500 bg-slate-100 opacity-95 "; 
+                            } else {
+                                seatClasses += "bg-slate-100 border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50 border-2 transition-colors cursor-pointer"; 
+                            }
+                        }
+                    }
+
+                    seats.push(
+                        <div 
+                            key={seatId} className={seatClasses} onClick={clickHandler} draggable={draggable} 
+                            onDragStart={(e) => { if (draggable && !isLocked) onDragStart(e, studentName, seatId, null); }} 
+                            onDragOver={(e) => { if (mode === 'view' && !isUnavailable && !isLocked) onDragOver(e); }} 
+                            onDrop={(e) => { if (mode === 'view' && !isUnavailable && !isLocked) onDrop(e, studentName, seatId); }} 
+                            title={hasViolation ? violations.join('\n') : (studentName || seatId)}
+                        >
+                        {mode === 'config' && isUnavailable && !isPrintMode && <Icon name="x" size={20} className="opacity-40 text-slate-700"/>}
+                        {studentName && (
+                            <>
+                                <div className="flex flex-col items-center justify-center w-full h-full pointer-events-none">
+                                    <div className="flex items-center justify-center w-full">
+                                        {studentNumbers[studentName] && <span className={`${isPrintMode ? 'text-slate-800 text-xs md:text-sm font-semibold mb-0.5' : 'text-slate-500 text-[10px] md:text-[11px] font-bold tracking-wider mb-0.5 bg-white/60 px-1 rounded'}`}>{studentNumbers[studentName]}</span>}
+                                    </div>
+                                    <span className={`font-black w-full px-0.5 ${isPrintMode ? 'text-black text-sm md:text-lg leading-tight break-words pb-1' : 'leading-snug line-clamp-2 md:mt-0.5 text-[13px] md:text-base'} ${hasViolation && !isPrintMode ? 'text-rose-900' : (!isPrintMode ? 'text-slate-800' : '')}`}>{studentName}</span>
+                                </div>
+                                {draggable && !isPrintMode && <Icon name="grip-vertical" size={12} className="absolute bottom-1 right-1 text-slate-300 opacity-40 md:opacity-0 group-hover:opacity-100 transition-opacity" />}
+                                {mode === 'view' && !isPrintMode && onToggleLock && (
+                                <button onClick={(e) => { e.stopPropagation(); onToggleLock(seatId); }} className={`absolute top-0 left-0 md:top-1 md:left-1 z-20 w-7 h-7 md:w-6 md:h-6 flex items-center justify-center rounded-br-lg md:rounded-full transition-all duration-300 ${isLocked ? 'bg-rose-500 md:border-2 border-rose-600 shadow-[0_0_6px_rgba(225,29,72,0.6)] md:scale-110 text-white' : 'bg-slate-200 border-slate-300 hover:bg-slate-400 hover:border-slate-500 hover:scale-110 opacity-60 md:opacity-0 group-hover:opacity-100 text-slate-500 hover:text-white md:text-transparent'}`} title={isLocked ? "已鎖定 (點擊解除)" : "點擊鎖定此座位"}>
+                                    {isLocked ? <Icon name="pin" size={14} className="transform rotate-45"/> : <Icon name="pin" size={12} className="opacity-0 md:opacity-100" />}
+                                </button>
+                                )}
+                            </>
+                        )}
+                        {!studentName && mode === 'view' && !isUnavailable && !isPrintMode && (
+                            <div className="text-[9px] md:text-[10px] text-slate-300 font-bold tracking-wider">{seatId}</div>
+                        )}
+                        </div>
+                    );
+                }
+            }
+
+            return (
+                <div className={`inline-block ${isPrintMode ? 'p-0 w-full' : 'p-1 md:p-2'}`}>
+                <Podium />
+                <div style={gridStyle}>{seats}</div>
+                </div>
+            );
+        };
+
+        // --- 8. 主程式 (State Management) ---
+        const SeatingAppMain = () => {
+            const [currentUser, setCurrentUser] = useState(null);
+            const [currentStep, setCurrentStep] = useState(1);
+
+            const [rows, setRows] = useState(6);
+            const [cols, setCols] = useState(7);
+            const [frontRowsCount, setFrontRowsCount] = useState(2);
+            const [unavailableSeats, setUnavailableSeats] = useState(new Set()); 
+            const [rawRosterInput, setRawRosterInput] = useState("");
+            const [roster, setRoster] = useState([]); 
+
+            const [fixedAssignments, setFixedAssignments] = useState({}); 
+            const [frontRowPriorityStudents, setFrontRowPriorityStudents] = useState(new Set()); 
+            const [mustSitTogether, setMustSitTogether] = useState([]); 
+            const [cannotSitTogether, setCannotSitTogether] = useState([]); 
+            const [studentNumbers, setStudentNumbers] = useState({}); 
+            const [studentGenders, setStudentGenders] = useState({});
+            const [enableCheckerboard, setEnableCheckerboard] = useState(false);
+
+            const [activeConstraintMode, setActiveConstraintMode] = useState(null); 
+            const [activeConstraintStudent, setActiveConstraintStudent] = useState(null); 
+            
+            const [batchMode, setBatchMode] = useState(null); 
+            const [batchSelection, setBatchSelection] = useState(new Set());
+            const [editingBatch, setEditingBatch] = useState(null);
+
+            const [showFixedSeatModal, setShowFixedSeatModal] = useState(false);
+            const [showResetConfirmModal, setShowResetConfirmModal] = useState(false); 
+            const [isPrintMode, setIsPrintMode] = useState(false);
+
+            const [showCloudModal, setShowCloudModal] = useState(false);
+            const [cloudMode, setCloudMode] = useState('save'); 
+            const [cloudProjects, setCloudProjects] = useState([]);
+            const [saveProjectName, setSaveProjectName] = useState("");
+            const [isCloudLoading, setIsCloudLoading] = useState(false);
+            
+            const [isGenerating, setIsGenerating] = useState(false);
+
+            const [seatingChart, setSeatingChart] = useState({}); 
+            const [holdingStudents, setHoldingStudents] = useState([]); 
+            const [manualViolations, setManualViolations] = useState([]);
+            const [seatViolationsMap, setSeatViolationsMap] = useState({}); 
+            const [lockedSeats, setLockedSeats] = useState(new Set()); 
+            
+            const [chartHistory, setChartHistory] = useState([]);
+            const [historyIndex, setHistoryIndex] = useState(-1);
+
+            const fileInputRef = useRef(null);
+
+            const handleLoginSuccess = (user) => { setCurrentUser(user); };
+            const handleLogout = () => { setCurrentUser(null); localStorage.removeItem('yk_seating_id'); localStorage.removeItem('yk_seating_pin'); resetAppToInitialState(); };
+
+            const resetAppToInitialState = () => {
+                setRows(6); setCols(7); setFrontRowsCount(2); setUnavailableSeats(new Set());
+                setRawRosterInput(""); setRoster([]);
+                setFixedAssignments({}); setFrontRowPriorityStudents(new Set()); setMustSitTogether([]); setCannotSitTogether([]);
+                setStudentNumbers({}); setStudentGenders({}); setEnableCheckerboard(false);
+                setActiveConstraintMode(null); setActiveConstraintStudent(null); setBatchMode(null); setBatchSelection(new Set()); setEditingBatch(null);
+                setSeatingChart({}); setHoldingStudents([]); setManualViolations([]); setSeatViolationsMap({}); setLockedSeats(new Set());
+                setChartHistory([]); setHistoryIndex(-1); setShowFixedSeatModal(false); setShowResetConfirmModal(false);
+                setCurrentStep(1);
+            };
+
+            const totalSeats = rows * cols;
+            const availableSeatsList = useMemo(() => {
+                const seats = [];
+                for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) { const id = getSeatId(r, c); if (!unavailableSeats.has(id)) seats.push({ id, r, c, isFrontRow: r < frontRowsCount }); }
+                } return seats;
+            }, [rows, cols, frontRowsCount, unavailableSeats]);
+
+            const totalAvailableSeats = availableSeatsList.length;
+            const frontAvailableSeats = availableSeatsList.filter(s => s.isFrontRow).length;
+
+            const studentsFixedInFrontRow = useMemo(() => {
+                const students = new Set();
+                for (const [student, seatId] of Object.entries(fixedAssignments)) {
+                    const parsed = parseSeatId(seatId); if (parsed && parsed.r < frontRowsCount && !unavailableSeats.has(seatId)) students.add(student);
+                } return students;
+            }, [fixedAssignments, frontRowsCount, unavailableSeats]);
+
+            const fixedFrontCount = studentsFixedInFrontRow.size;
+            const effectiveFrontAvailableSeats = frontAvailableSeats - fixedFrontCount;
+
+            const prepareProjectData = () => ({
+                version: "5.0", 
+                name: saveProjectName || `座位表存檔 ${new Date().toLocaleDateString()}`,
+                currentStep,
+                config: { rows, cols, frontRowsCount, unavailableSeats: Array.from(unavailableSeats), enableCheckerboard },
+                rosterData: { rawRosterInput, roster, studentNumbers, studentGenders },
+                constraints: { fixedAssignments, frontRowPriorityStudents: Array.from(frontRowPriorityStudents), mustSitTogether: mustSitTogether.map(g => JSON.stringify(g)), cannotSitTogether: cannotSitTogether.map(p => JSON.stringify(p)) },
+                results: { seatingChart, holdingStudents, lockedSeats: Array.from(lockedSeats) }
+            });
+
+            const openCloudManager = async () => {
+                setCloudMode('save'); setSaveProjectName(`班級座位表 ${new Date().toLocaleDateString()}`);
+                setShowCloudModal(true); await fetchCloudProjects(); 
+            };
+
+            const handleCloudSave = async () => {
+                if (!saveProjectName.trim()) return;
+                const existingProject = cloudProjects.find(p => p.name === saveProjectName.trim());
+                if (existingProject) { if (!window.confirm(`雲端已存在名為「${saveProjectName}」的存檔。\n您確定要覆蓋它嗎？`)) return; }
+                setIsCloudLoading(true);
+                try {
+                    const payload = { action: 'save', id: existingProject ? existingProject.id : null, projectName: saveProjectName.trim(), projectData: prepareProjectData(), timestamp: new Date().toISOString(), teacherId: currentUser.id, pin: currentUser.pin };
+                    const res = await fetch(SCRIPT_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+                    const result = await res.json();
+                    if (result.success) setShowCloudModal(false); else alert("儲存失敗：" + (result.error || "權限不足"));
+                } catch (error) { alert("連線失敗，請檢查網路狀態。"); } finally { setIsCloudLoading(false); }
+            };
+
+            const fetchCloudProjects = async () => {
+                setIsCloudLoading(true);
+                try {
+                    const res = await fetch(`${SCRIPT_URL}?action=getData&teacherId=${currentUser.id}&pin=${currentUser.pin}&t=${Date.now()}`);
+                    const data = await res.json();
+                    if(data.error) { alert(data.error); handleLogout(); return; }
+                    if (Array.isArray(data)) setCloudProjects(data);
+                } catch (error) { console.error("Fetch failed", error); } finally { setIsCloudLoading(false); }
+            };
+
+            const handleDeleteProject = async (docId) => {
+                if (!window.confirm("確定要刪除此存檔嗎？此操作無法復原。")) return;
+                setIsCloudLoading(true);
+                try {
+                    const payload = { action: 'delete', id: docId, teacherId: currentUser.id, pin: currentUser.pin };
+                    const res = await fetch(SCRIPT_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+                    const result = await res.json();
+                    if (result.success) await fetchCloudProjects(); else alert(result.error);
+                } catch (error) { console.error("Delete failed", error); } finally { setIsCloudLoading(false); }
+            };
+
+            const handleLoadProject = (data) => {
+                try {
+                setRows(data.config.rows); setCols(data.config.cols); setFrontRowsCount(data.config.frontRowsCount);
+                setUnavailableSeats(new Set(data.config.unavailableSeats)); setEnableCheckerboard(!!data.config.enableCheckerboard);
+                setRawRosterInput(data.rosterData.rawRosterInput); setRoster(data.rosterData.roster);
+                setStudentNumbers(data.rosterData.studentNumbers || {}); setStudentGenders(data.rosterData.studentGenders || {});
+                setFixedAssignments(data.constraints.fixedAssignments || {}); setFrontRowPriorityStudents(new Set(data.constraints.frontRowPriorityStudents || []));
+                setMustSitTogether((data.constraints.mustSitTogether || []).map(g => typeof g === 'string' ? JSON.parse(g) : g));
+                setCannotSitTogether((data.constraints.cannotSitTogether || []).map(p => typeof p === 'string' ? JSON.parse(p) : p));
+                
+                if (data.results?.seatingChart) {
+                    setSeatingChart(data.results.seatingChart); setHoldingStudents(data.results.holdingStudents || []); setLockedSeats(new Set(data.results.lockedSeats || []));
+                    setChartHistory([{ chart: data.results.seatingChart, holding: data.results.holdingStudents || [] }]); setHistoryIndex(0); validateSeating(data.results.seatingChart);
+                }
+                setCurrentStep(data.currentStep || 1); setShowCloudModal(false);
+                } catch (err) { alert("載入失敗：檔案格式錯誤。"); }
+            };
+
+            const handleFileDownload = () => {
+                const projectData = prepareProjectData(); const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(projectData));
+                const downloadAnchorNode = document.createElement('a'); downloadAnchorNode.setAttribute("href", dataStr); downloadAnchorNode.setAttribute("download", `${projectData.name}.json`);
+                document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove();
+            };
+
+            const handleFileUpload = (event) => {
+                const file = event.target.files[0]; if (!file) return; const reader = new FileReader();
+                reader.onload = (e) => { try { handleLoadProject(JSON.parse(e.target.result)); } catch (err) { alert("載入失敗：檔案格式錯誤。"); } };
+                reader.readAsText(file); event.target.value = null;
+            };
+
+            const toggleUnavailableSeat = (r, c) => { const id = getSeatId(r, c); setUnavailableSeats(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
+
+            const parseAndValidateRoster = () => {
+                const lines = rawRosterInput.split('\n').filter(line => line.trim().length > 0);
+                const newRoster = []; const newNumbers = { ...studentNumbers }; const newGenders = { ...studentGenders };
+
+                lines.forEach(line => {
+                    let name = line.trim(); let num = null; let gender = null;
+                    const genderMatch = name.match(/\s*(男|女|[MFmf])\s*$/);
+                    if(genderMatch) { 
+                        let gRaw = genderMatch[1].toUpperCase(); 
+                        gender = (gRaw === '男' || gRaw === 'M') ? 'M' : 'F'; 
+                        name = name.replace(/\s*(男|女|[MFmf])\s*$/, '').trim(); 
+                    }
+                    const numMatch = name.match(/^(\d+)[.、\s]*/);
+                    if (numMatch) { num = numMatch[1]; name = name.replace(/^(\d+)[.、\s]*/, '').trim(); }
+                    name = name.replace(/[,;\t()（）]/g, '').trim();
+
+                    if (name && !newRoster.includes(name)) { newRoster.push(name); if (num) newNumbers[name] = num; if (gender) newGenders[name] = gender; }
+                });
+
+                setRoster(newRoster); setStudentNumbers(newNumbers); setStudentGenders(newGenders);
+
+                const newRosterSet = new Set(newRoster);
+                const nextFixed = { ...fixedAssignments }; Object.keys(nextFixed).forEach(name => { if (!newRosterSet.has(name)) delete nextFixed[name]; });
+                setFixedAssignments(nextFixed);
+                setFrontRowPriorityStudents(prev => new Set([...prev].filter(n => newRosterSet.has(n))));
+                setMustSitTogether(prev => prev.map(group => group.filter(n => newRosterSet.has(n))).filter(group => group.length >= 2));
+                setCannotSitTogether(prev => prev.map(pair => pair.filter(n => newRosterSet.has(n))).filter(pair => pair.length === 2));
+                return true;
+            };
+
+            const goToStep2 = () => { if (parseAndValidateRoster()) setCurrentStep(2); };
+
+            const toggleFrontRowPriority = (student) => {
+                const assignedSeat = fixedAssignments[student];
+                if (assignedSeat) {
+                    const parsed = parseSeatId(assignedSeat);
+                    if (parsed && parsed.r >= frontRowsCount && !unavailableSeats.has(assignedSeat)) { alert(`【操作無效】${student} 已被指定在後排座位，無法設為前排優先。\n請先解除指定座位。`); return;
+                    }
+                }
+                setFrontRowPriorityStudents(prev => { const next = new Set(prev); if (next.has(student)) next.delete(student); else next.add(student); return next; });
+            };
+
+            const startConstraintMode = (mode, student) => {
+                if (activeConstraintMode === mode && activeConstraintStudent === student) { setActiveConstraintMode(null); setActiveConstraintStudent(null); return; }
+                setActiveConstraintMode(mode); setActiveConstraintStudent(student);
+            };
+
+            const applyConstraintPair = (targetStudent) => {
+                if (!activeConstraintMode || !activeConstraintStudent || activeConstraintStudent === targetStudent) { startConstraintMode(activeConstraintMode, targetStudent); return; }
+                if (activeConstraintMode === 'MUST_SIT') {
+                    if (cannotSitTogether.some(p => (p.includes(activeConstraintStudent) && p.includes(targetStudent)))) { alert(`${activeConstraintStudent} 和 ${targetStudent} 已設定為「禁止相鄰」。`); setActiveConstraintMode(null); setActiveConstraintStudent(null); return; }
+                    let newGroups = [...mustSitTogether]; let sIdx = newGroups.findIndex(g => g.includes(activeConstraintStudent)); let tIdx = newGroups.findIndex(g => g.includes(targetStudent));
+                    if (sIdx !== -1 && tIdx !== -1) { if (sIdx !== tIdx) { const merged = [...new Set([...newGroups[sIdx], ...newGroups[tIdx]])]; newGroups = newGroups.filter((_, idx) => idx !== sIdx && idx !== tIdx); newGroups.push(merged); } } 
+                    else if (sIdx !== -1) newGroups[sIdx] = [...new Set([...newGroups[sIdx], targetStudent])];
+                    else if (tIdx !== -1) newGroups[tIdx] = [...new Set([...newGroups[tIdx], activeConstraintStudent])];
+                    else newGroups.push([activeConstraintStudent, targetStudent]);
+                    setMustSitTogether(newGroups);
+                } else if (activeConstraintMode === 'CANNOT_SIT') {
+                    if (mustSitTogether.some(g => g.includes(activeConstraintStudent) && g.includes(targetStudent))) { alert(`${activeConstraintStudent} 和 ${targetStudent} 已設定為「必須相鄰」。`); setActiveConstraintMode(null); setActiveConstraintStudent(null); return; }
+                    if (!cannotSitTogether.some(p => p.includes(activeConstraintStudent) && p.includes(targetStudent))) setCannotSitTogether(prev => [...prev, [activeConstraintStudent, targetStudent]]);
+                }
+                setActiveConstraintMode(null); setActiveConstraintStudent(null);
+            };
+
+            const startBatchMode = (mode) => { if(enableCheckerboard) return; setActiveConstraintMode(null); setActiveConstraintStudent(null); setBatchMode(mode); setBatchSelection(new Set()); setEditingBatch(null); };
+            const toggleBatchSelection = (student) => { setBatchSelection(prev => { const next = new Set(prev); if (next.has(student)) next.delete(student); else next.add(student); return next; }); };
+            
+            const editGroup = (type, index, members) => {
+                if (enableCheckerboard) return;
+                setActiveConstraintMode(null);
+                setActiveConstraintStudent(null);
+                setEditingBatch({ type, index });
+                setBatchSelection(new Set(members));
+                setBatchMode(type);
+            };
+
+            const applyBatchMode = () => {
+                const arr = Array.from(batchSelection);
+                if (batchMode === 'MUST_SIT') {
+                    setMustSitTogether(prev => {
+                        let newGroups = [...prev];
+                        if (editingBatch && editingBatch.type === 'MUST_SIT') {
+                            newGroups = newGroups.filter((_, i) => i !== editingBatch.index);
+                        }
+                        let mergedSet = new Set(arr);
+                        newGroups = newGroups.filter(g => {
+                            if (g.some(s => mergedSet.has(s))) {
+                                g.forEach(s => mergedSet.add(s));
+                                return false; 
+                            }
+                            return true;
+                        });
+                        if (mergedSet.size >= 2) newGroups.push(Array.from(mergedSet));
+                        return newGroups;
+                    });
+                } else if (batchMode === 'CANNOT_SIT') { 
+                    setCannotSitTogether(prev => {
+                        let newPairs = [...prev];
+                        if (editingBatch && editingBatch.type === 'CANNOT_SIT') {
+                            newPairs = newPairs.filter((_, i) => i !== editingBatch.index);
+                        }
+                        for(let i=0; i<arr.length; i++) { 
+                            for(let j=i+1; j<arr.length; j++) newPairs.push([arr[i], arr[j]]); 
+                        } 
+                        const uniquePairs = [];
+                        const seen = new Set();
+                        newPairs.forEach(p => {
+                            const key = p.slice().sort().join('|');
+                            if (!seen.has(key)) { seen.add(key); uniquePairs.push(p); }
+                        });
+                        return uniquePairs;
+                    }); 
+                }
+                setBatchMode(null); setBatchSelection(new Set()); setEditingBatch(null);
+            };
+            const cancelBatchMode = () => { setBatchMode(null); setBatchSelection(new Set()); setEditingBatch(null); };
+
+            const handleRemoveFromMustGroup = (groupIndex, student) => {
+                setMustSitTogether(prev => {
+                    const next = [...prev];
+                    next[groupIndex] = next[groupIndex].filter(s => s !== student);
+                    if (next[groupIndex].length < 2) next.splice(groupIndex, 1);
+                    return next;
+                });
+            };
+            const handleDeleteMustGroup = (groupIndex) => setMustSitTogether(prev => prev.filter((_, i) => i !== groupIndex));
+            const handleDeleteCannotPair = (pairIndex) => setCannotSitTogether(prev => prev.filter((_, i) => i !== pairIndex));
+
+            const removeStudentFromMustSit = (student) => setMustSitTogether(prev => prev.map(g => g.filter(s => s !== student)).filter(g => g.length >= 2));
+            const removeStudentFromCannotSit = (student) => setCannotSitTogether(prev => prev.filter(p => !p.includes(student)));
+            const clearAllStudentConstraints = (student) => {
+                setFixedAssignments(prev => { const next = {...prev}; delete next[student]; return next; });
+                setFrontRowPriorityStudents(prev => { const next = new Set(prev); next.delete(student); return next; });
+                setMustSitTogether(prev => prev.map(g => g.filter(s => s !== student)).filter(g => g.length >= 2));
+                setCannotSitTogether(prev => prev.filter(p => !p.includes(student)));
+            };
+            const openFixedSeatModal = (student) => { setActiveConstraintStudent(student); setShowFixedSeatModal(true); };
+            const clearFixedAssignment = (student) => setFixedAssignments(prev => { const next = { ...prev }; delete next[student]; return next; });
+            const handleFixedSeatSelect = (seatId) => {
+                if (!activeConstraintStudent) return;
+                if (frontRowPriorityStudents.has(activeConstraintStudent)) {
+                    const parsed = parseSeatId(seatId); if (parsed && parsed.r >= frontRowsCount) { alert(`【操作無效】${activeConstraintStudent} 已設為「前排優先」，無法指定至後排座位。\n請先取消其前排設定。`); return; }
+                }
+                setFixedAssignments(prev => ({ ...prev, [activeConstraintStudent]: seatId })); setShowFixedSeatModal(false); setActiveConstraintStudent(null);
+            };
+            const resetAllConstraints = () => { if (window.confirm("確定要清除所有學生約束設定嗎？")) { setFixedAssignments({}); setFrontRowPriorityStudents(new Set()); setMustSitTogether([]); setCannotSitTogether([]); } };
+
+            const tryPlaceUnit = (unit, candidateSeats, chart, finalUsedSeats, cols) => {
+                if (!unit.isGroup) { for (const s of candidateSeats) { chart[s.id] = unit.members[0]; finalUsedSeats.add(s.id); return true; } } 
+                else {
+                    for (const s of candidateSeats) {
+                        const adjSeats = candidateSeats.filter(cand => cand.id !== s.id && isStrictAdjacent(s.id, cand.id));
+                        if (adjSeats.length >= unit.members.length - 1) {
+                            chart[s.id] = unit.members[0]; finalUsedSeats.add(s.id);
+                            for (let i = 1; i < unit.members.length; i++) { chart[adjSeats[i - 1].id] = unit.members[i]; finalUsedSeats.add(adjSeats[i - 1].id); }
+                            return true;
+                        }
+                    }
+                } return false;
+            };
+
+            const runSingleGenerationPass = (effectiveFixed) => {
+                const chart = {}; const assignedStudents = new Set(); const usedSeats = new Set(unavailableSeats); 
+
+                for (const [student, seatId] of Object.entries(effectiveFixed)) {
+                    if (roster.includes(student) && !unavailableSeats.has(seatId) && !chart[seatId]) { chart[seatId] = student; assignedStudents.add(student); usedSeats.add(seatId); }
+                }
+
+                let remainingStudents = roster.filter(s => !assignedStudents.has(s));
+                let placementUnits = []; const processedForUnits = new Set();
+                const effectiveMustSit = enableCheckerboard ? [] : mustSitTogether;
+
+                for (const group of effectiveMustSit) {
+                    const unassigned = group.filter(s => !assignedStudents.has(s));
+                    if (unassigned.length > 0 && !unassigned.some(s => processedForUnits.has(s))) {
+                        placementUnits.push({ members: unassigned, isGroup: true, isFrontPriority: unassigned.some(s => frontRowPriorityStudents.has(s)) }); unassigned.forEach(s => processedForUnits.add(s));
+                    }
+                }
+                for (const student of remainingStudents) {
+                    if (!processedForUnits.has(student)) { placementUnits.push({ members: [student], isGroup: false, isFrontPriority: frontRowPriorityStudents.has(student) }); processedForUnits.add(student); }
+                }
+
+                let frontUnits = placementUnits.filter(u => u.isFrontPriority).sort((a,b) => b.members.length - a.members.length);
+                let nonFrontGroupUnits = placementUnits.filter(u => !u.isFrontPriority && u.isGroup).sort((a,b) => b.members.length - a.members.length);
+                let individuals = placementUnits.filter(u => !u.isFrontPriority && !u.isGroup); shuffleArray(individuals); 
+
+                const finalPlacementUnits = [...frontUnits, ...nonFrontGroupUnits, ...individuals];
+
+                let availableSeatsSeq = [];
+                for (let r = 0; r < rows; r++) { for (let c = 0; c < cols; c++) { const id = getSeatId(r, c); if (!usedSeats.has(id)) availableSeatsSeq.push({ id, r, c, isFrontRow: r < frontRowsCount }); } }
+
+                const finalUsedSeats = new Set(usedSeats); const unplaced = [];
+
+                for (const unit of finalPlacementUnits) {
+                    let placed = false; let candidateSeats = availableSeatsSeq.filter(s => !finalUsedSeats.has(s.id)); shuffleArray(candidateSeats); 
+                    if (unit.isFrontPriority) { let frontCandidates = candidateSeats.filter(s => s.isFrontRow); if (tryPlaceUnit(unit, frontCandidates, chart, finalUsedSeats, cols)) placed = true; }
+                    if (!placed) { if (tryPlaceUnit(unit, candidateSeats, chart, finalUsedSeats, cols)) placed = true; }
+                    
+                    if (!placed && unit.isGroup) {
+                        for (const member of unit.members) {
+                            let memberPlaced = false; let singleCandidates = availableSeatsSeq.filter(s => !finalUsedSeats.has(s.id)); shuffleArray(singleCandidates);
+                            for (const s of singleCandidates) { chart[s.id] = member; finalUsedSeats.add(s.id); memberPlaced = true; break; }
+                            if (!memberPlaced) unplaced.push(member);
+                        } placed = true;
+                    }
+                    if (!placed) unplaced.push(...unit.members);
+                }
+                return { chart, unplaced, availableSeatsSeq }; 
+            };
+
+            const calculatePenalty = useCallback((chart, unplaced) => {
+                let penalty = unplaced.length * 100000; const centerC = (cols - 1) / 2;
+                
+                const studentToSeat = {};
+                for (const seatId in chart) studentToSeat[chart[seatId]] = seatId;
+
+                frontRowPriorityStudents.forEach(student => {
+                    const seatId = studentToSeat[student];
+                    if (seatId) { const parsed = parseSeatId(seatId); if (parsed.r >= frontRowsCount) penalty += 5000; else penalty += Math.abs(parsed.c - centerC) * 10; }
+                });
+
+                if (enableCheckerboard) {
+                    Object.entries(chart).forEach(([seatId, student]) => {
+                        const g1 = studentGenders[student];
+                        if (g1) {
+                            const parsed = parseSeatId(seatId); const right = getSeatId(parsed.r, parsed.c + 1); const down = getSeatId(parsed.r + 1, parsed.c);
+                            [right, down].forEach(adjId => { if (chart[adjId] && !unavailableSeats.has(adjId)) { const g2 = studentGenders[chart[adjId]]; if (g2 && g1 === g2) penalty += 30000; } });
+                        }
+                    });
+                } else {
+                    mustSitTogether.forEach(group => {
+                        const seats = group.map(s => studentToSeat[s]).filter(Boolean);
+                        if (seats.length < group.length) penalty += 20000;
+                        else { 
+                            seats.forEach(s1 => { if (!seats.some(s2 => s1 !== s2 && isStrictAdjacent(s1, s2)) && group.length > 1) penalty += 8000; }); 
+                        }
+                    });
+                    cannotSitTogether.forEach(pair => {
+                        const s1 = studentToSeat[pair[0]]; const s2 = studentToSeat[pair[1]];
+                        if (s1 && s2 && isStrictAdjacent(s1, s2)) penalty += 10000; 
+                    });
+                }
+                return penalty;
+            }, [cols, frontRowsCount, frontRowPriorityStudents, mustSitTogether, cannotSitTogether, enableCheckerboard, studentGenders, unavailableSeats]);
+
+            const generateSeatingChart = (keepLocked = false) => {
+                try {
+                    let bestChart = null; let bestScore = Infinity; let bestUnplaced = [];
+                    const effectiveFixed = { ...fixedAssignments };
+                    if (keepLocked) { lockedSeats.forEach(seatId => { if (seatingChart[seatId]) effectiveFixed[seatingChart[seatId]] = seatId; }); }
+
+                    for (let iter = 0; iter < 50; iter++) {
+                        const { chart, unplaced, availableSeatsSeq } = runSingleGenerationPass(effectiveFixed);
+                        let currentPenalty = calculatePenalty(chart, unplaced); let improved = true; let loops = 0;
+
+                        const movableSeats = availableSeatsSeq.map(s => s.id).filter(id => !Object.values(effectiveFixed).includes(id));
+
+                        while (improved && loops < 30) { 
+                            improved = false; loops++;
+                            for (let i = 0; i < movableSeats.length; i++) {
+                                for (let j = i + 1; j < movableSeats.length; j++) {
+                                    const s1 = movableSeats[i]; const s2 = movableSeats[j];
+                                    const temp1 = chart[s1]; const temp2 = chart[s2];
+                                    if (!temp1 && !temp2) continue;
+                                    
+                                    if (temp2) chart[s1] = temp2; else delete chart[s1];
+                                    if (temp1) chart[s2] = temp1; else delete chart[s2];
+                                    
+                                    const newPenalty = calculatePenalty(chart, unplaced);
+                                    if (newPenalty < currentPenalty) { currentPenalty = newPenalty; improved = true; } 
+                                    else { if (temp1) chart[s1] = temp1; else delete chart[s1]; if (temp2) chart[s2] = temp2; else delete chart[s2]; }
+                                }
+                            }
+                        }
+                        if (currentPenalty < bestScore) { bestScore = currentPenalty; bestChart = { ...chart }; bestUnplaced = [...unplaced]; }
+                        if (bestScore === 0) break; 
+                    }
+
+                    if (keepLocked) {
+                        handleUpdateChartAndHolding(bestChart, bestUnplaced);
+                    } else {
+                        setSeatingChart(bestChart); setHoldingStudents(bestUnplaced);
+                        setChartHistory([{ chart: bestChart, holding: bestUnplaced }]); setHistoryIndex(0);
+                        setCurrentStep(3); validateSeating(bestChart); 
+                    }
+                } catch (e) {
+                    console.error(e);
+                    alert("座位生成發生錯誤，請重試。");
+                }
+            };
+            
+            const handleGenerateTrigger = (keepLocked = false) => { setIsGenerating(true); setTimeout(() => { generateSeatingChart(keepLocked); setIsGenerating(false); }, 50); }
+
+            const validateSeatingPure = useCallback((chart) => {
+                const violations = []; const seatMap = {}; 
+                const markViolation = (seatId, msg) => { if (!seatId) return; if (!seatMap[seatId]) seatMap[seatId] = []; seatMap[seatId].push(msg); violations.push(msg); };
+
+                const studentToSeat = {};
+                for (const seatId in chart) studentToSeat[chart[seatId]] = seatId;
+
+                for (const student of frontRowPriorityStudents) {
+                    const seatId = studentToSeat[student];
+                    if (seatId && parseSeatId(seatId).r >= frontRowsCount) markViolation(seatId, `【前排優先】應坐前排`);
+                }
+
+                for (const [student, requiredSeatId] of Object.entries(fixedAssignments)) {
+                    const currentSeatId = studentToSeat[student];
+                    if (currentSeatId && currentSeatId !== requiredSeatId) markViolation(currentSeatId, `【指定座位】應坐於 ${requiredSeatId}`);
+                }
+
+                if (enableCheckerboard) {
+                    Object.entries(chart).forEach(([seatId, student]) => {
+                        const g1 = studentGenders[student];
+                        if (g1) {
+                            const parsed = parseSeatId(seatId); const right = getSeatId(parsed.r, parsed.c + 1); const down = getSeatId(parsed.r + 1, parsed.c);
+                            [right, down].forEach(adjId => { if (chart[adjId] && !unavailableSeats.has(adjId)) { const g2 = studentGenders[chart[adjId]]; if (g2 && g1 === g2) { markViolation(seatId, `【梅花座衝突】同性相鄰`); markViolation(adjId, `【梅花座衝突】同性相鄰`); } } });
+                        }
+                    });
+                } else {
+                    mustSitTogether.forEach(group => {
+                        const memberSeats = group.map(s => ({ name: s, seat: studentToSeat[s] })).filter(o => o.seat);
+                        if (memberSeats.length < group.length) violations.push(`【必須相鄰】[${group.join(', ')}] 有成員在暫存區`);
+                        else { 
+                            memberSeats.forEach(ms => { 
+                                const hasAdj = memberSeats.some(other => other.name !== ms.name && isStrictAdjacent(ms.seat, other.seat)); 
+                                if (!hasAdj && group.length > 1) markViolation(ms.seat, `【同桌互助】未與群組相鄰(前後左右)`); 
+                            }); 
+                        }
+                    });
+                    cannotSitTogether.forEach(pair => {
+                        const seat1 = studentToSeat[pair[0]]; const seat2 = studentToSeat[pair[1]];
+                        if (seat1 && seat2 && isStrictAdjacent(seat1, seat2)) { markViolation(seat1, `【禁止相鄰】緊鄰 ${pair[1]}`); markViolation(seat2, `【禁止相鄰】緊鄰 ${pair[0]}`); }
+                    });
+                }
+                return { violations, seatMap };
+            }, [cols, frontRowsCount, frontRowPriorityStudents, fixedAssignments, mustSitTogether, cannotSitTogether, enableCheckerboard, studentGenders, unavailableSeats]);
+
+            const validateSeating = useCallback((chart) => { const { violations, seatMap } = validateSeatingPure(chart); setManualViolations([...new Set(violations)]); setSeatViolationsMap(seatMap); }, [validateSeatingPure]);
+
+            const handleUpdateChartAndHolding = (newChart, newHolding) => {
+                const newHistory = chartHistory.slice(0, historyIndex + 1); newHistory.push({ chart: newChart, holding: newHolding });
+                setChartHistory(newHistory); setHistoryIndex(newHistory.length - 1); setSeatingChart(newChart); setHoldingStudents(newHolding); validateSeating(newChart);
+            };
+
+            const undo = () => { if (historyIndex > 0) { const prevState = chartHistory[historyIndex - 1]; setHistoryIndex(historyIndex - 1); setSeatingChart(prevState.chart); setHoldingStudents(prevState.holding); validateSeating(prevState.chart); } };
+            const redo = () => { if (historyIndex < chartHistory.length - 1) { const nextState = chartHistory[historyIndex + 1]; setHistoryIndex(historyIndex + 1); setSeatingChart(nextState.chart); setHoldingStudents(nextState.holding); validateSeating(nextState.chart); } };
+
+            const handleDragStart = (e, student, seatId, idx) => { const source = seatId ? 'seat' : 'holding'; e.dataTransfer.setData("application/json", JSON.stringify({ source, student, seatId, idx })); e.dataTransfer.effectAllowed = "move"; };
+
+            const handleSeatDrop = (e, targetStudent, targetSeatId) => {
+                e.preventDefault(); if (lockedSeats.has(targetSeatId)) return;
+                try {
+                    const data = JSON.parse(e.dataTransfer.getData("application/json"));
+                    if (data.source === 'seat' && lockedSeats.has(data.seatId)) return;
+                    if (!data.student || (data.source === 'seat' && data.seatId === targetSeatId)) return;
+
+                    const newChart = { ...seatingChart }; let newHolding = [...holdingStudents];
+                    if (data.source === 'holding') { newChart[targetSeatId] = data.student; newHolding.splice(data.idx, 1); if (targetStudent) newHolding.push(targetStudent); } 
+                    else if (data.source === 'seat') { if (!targetStudent) { delete newChart[data.seatId]; newChart[targetSeatId] = data.student; } else { newChart[data.seatId] = targetStudent; newChart[targetSeatId] = data.student; } }
+
+                    const oldV = validateSeatingPure(seatingChart).violations.length; const newV = validateSeatingPure(newChart).violations.length;
+                    if (newV > oldV) { if (!window.confirm("此交換將產生新的違規衝突，確定要強制放置嗎？")) return; }
+                    handleUpdateChartAndHolding(newChart, newHolding);
+                } catch (err) {}
+            };
+
+            const handleHoldingZoneDrop = (e) => {
+                e.preventDefault();
+                try {
+                    const data = JSON.parse(e.dataTransfer.getData("application/json"));
+                    if (data.source !== 'seat') return; if (lockedSeats.has(data.seatId)) return;
+                    
+                    const newChart = { ...seatingChart }; const student = newChart[data.seatId]; delete newChart[data.seatId];
+                    const newHolding = [...holdingStudents, student]; handleUpdateChartAndHolding(newChart, newHolding);
+                } catch(err){}
+            };
+
+            const handleToggleLock = (seatId) => { setLockedSeats(prev => { const next = new Set(prev); if (next.has(seatId)) next.delete(seatId); else next.add(seatId); return next; }); };
+
+            if (!currentUser) return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+
+            return (
+                <div className="min-h-screen bg-slate-50 p-0 sm:p-4 md:p-8 font-sans text-slate-800 selection:bg-indigo-100 pb-24 md:pb-8">
+                <div className="max-w-[85rem] mx-auto bg-white sm:rounded-2xl shadow-xl border border-slate-200 p-4 md:p-6 transition-all min-h-screen sm:min-h-0">
+
+                    <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 gap-4 border-b border-slate-100 pb-4">
+                    <div>
+                        <h1 className="text-xl md:text-3xl font-extrabold text-slate-900 flex items-center gap-2 md:gap-3 tracking-tight">
+                        <div className="p-1.5 md:p-2 bg-indigo-100 rounded-lg"><Icon name="users" className="text-indigo-600 w-5 h-5 md:w-7 md:h-7" /></div>
+                        彥翔教室座位安排
+                        </h1>
+                        <p className="mt-1 text-slate-500 font-medium ml-1 text-xs md:text-sm">專為教育工作者設計，快速排定完美座位表</p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
+                        <div className="flex items-center justify-center space-x-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200 hidden md:flex">
+                        {[1, 2, 3].map((step) => (
+                            <div key={step} className="flex items-center">
+                                <div className={`flex items-center justify-center w-6 h-6 md:w-8 md:h-8 rounded-lg font-bold text-xs md:text-sm transition-all duration-300 ${currentStep === step ? 'bg-indigo-600 text-white shadow-md' : currentStep > step ? 'bg-indigo-100 text-indigo-700' : 'bg-transparent text-slate-400'}`}>
+                                    {currentStep > step ? <Icon name="check" size={14} /> : step}
+                                </div>
+                                {step < 3 && <Icon name="chevron-right" size={14} className={`mx-1 ${currentStep > step ? 'text-indigo-400' : 'text-slate-300'}`} />}
+                            </div>
+                        ))}
+                        </div>
+                        
+                        <div className="flex items-center justify-between sm:justify-start gap-3 w-full sm:w-auto bg-indigo-50/50 p-2 sm:p-1.5 sm:pl-4 rounded-xl border border-indigo-100">
+                            <span className="text-xs md:text-sm font-bold text-indigo-800 flex items-center gap-1.5"><Icon name="user-check" size={14}/> {currentUser.name}</span>
+                            <button onClick={handleLogout} className="px-3 py-1.5 bg-white hover:bg-red-50 hover:text-red-600 text-slate-500 rounded-lg text-xs font-bold transition shadow-sm">登出</button>
+                        </div>
+                        
+                        <button onClick={openCloudManager} className="flex items-center justify-center w-full sm:w-auto gap-1.5 md:gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl transition-all shadow-sm font-semibold hover:shadow text-sm">
+                        <Icon name="cloud" size={16} className="text-indigo-500" /> 雲端資料庫
+                        </button>
+                    </div>
+                    </header>
+
+                    <main className="min-h-[60vh]">
+                    {currentStep === 1 && <Step1Setup rows={rows} setRows={setRows} cols={cols} setCols={setCols} frontRowsCount={frontRowsCount} setFrontRowsCount={setFrontRowsCount} unavailableSeats={unavailableSeats} toggleUnavailableSeat={toggleUnavailableSeat} rawRosterInput={rawRosterInput} handleRosterChange={e => setRawRosterInput(e.target.value)} rosterCount={rawRosterInput.split('\n').filter(x=>x.trim()).length} totalAvailableSeats={totalAvailableSeats} onNext={goToStep2} enableCheckerboard={enableCheckerboard} setEnableCheckerboard={setEnableCheckerboard} />}
+                    {currentStep === 2 && <Step2Constraints roster={roster} fixedAssignments={fixedAssignments} frontRowPriorityStudents={frontRowPriorityStudents} mustSitTogether={mustSitTogether} cannotSitTogether={cannotSitTogether} studentNumbers={studentNumbers} studentGenders={studentGenders} enableCheckerboard={enableCheckerboard} toggleFrontRowPriority={toggleFrontRowPriority} activeConstraintMode={activeConstraintMode} activeConstraintStudent={activeConstraintStudent} startConstraintMode={startConstraintMode} applyConstraintPair={applyConstraintPair} openFixedSeatModal={openFixedSeatModal} clearFixedAssignment={clearFixedAssignment} clearAllStudentConstraints={clearAllStudentConstraints} removeStudentFromMustSit={removeStudentFromMustSit} removeStudentFromCannotSit={removeStudentFromCannotSit} isInMustSitGroup={student => mustSitTogether.some(g => g.includes(student))} isInCannotSitPair={student => cannotSitTogether.some(p => p.includes(student))} getMustSitPartners={student => mustSitTogether.find(g => g.includes(student))?.filter(s => s !== student) || []} getCannotSitPartners={student => cannotSitTogether.filter(p => p.includes(student)).map(p => p.find(s => s !== student))} onPrev={() => setCurrentStep(1)} onGenerate={() => handleGenerateTrigger(false)} isGenerating={isGenerating} resetAllConstraints={resetAllConstraints} totalAvailableSeats={totalAvailableSeats} frontAvailableSeats={frontAvailableSeats} frontRowsCount={frontRowsCount} fixedFrontCount={fixedFrontCount} effectiveFrontAvailableSeats={effectiveFrontAvailableSeats} unavailableSeats={unavailableSeats} batchMode={batchMode} startBatchMode={startBatchMode} batchSelection={batchSelection} toggleBatchSelection={toggleBatchSelection} applyBatchMode={applyBatchMode} cancelBatchMode={cancelBatchMode} handleRemoveFromMustGroup={handleRemoveFromMustGroup} handleDeleteMustGroup={handleDeleteMustGroup} handleDeleteCannotPair={handleDeleteCannotPair} editingBatch={editingBatch} editGroup={editGroup} />}
+                    {currentStep === 3 && <Step3Results fixedAssignments={fixedAssignments} rows={rows} cols={cols} frontRowsCount={frontRowsCount} unavailableSeats={unavailableSeats} seatingChart={seatingChart} holdingStudents={holdingStudents} manualViolations={manualViolations} seatViolationsMap={seatViolationsMap} studentNumbers={studentNumbers} lockedSeats={lockedSeats} handleToggleLock={handleToggleLock} handleDragStart={handleDragStart} handleDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} handleSeatDrop={handleSeatDrop} handleHoldingZoneDrop={handleHoldingZoneDrop} historyIndex={historyIndex} historyLength={chartHistory.length} undo={undo} redo={redo} onPrev={() => setCurrentStep(2)} onReset={() => setShowResetConfirmModal(true)} onGenerateLocked={() => handleGenerateTrigger(true)} isPrintMode={isPrintMode} setIsPrintMode={setIsPrintMode} isGenerating={isGenerating} />}
+                    </main>
+
+                    {showFixedSeatModal && (
+                    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-2xl shadow-2xl p-4 md:p-6 max-w-4xl w-full max-h-[90vh] flex flex-col border border-slate-100 animate-[fadeIn_0.2s_ease-out]">
+                            <div className="flex justify-between items-center mb-4 md:mb-6 border-b border-slate-100 pb-3 md:pb-4">
+                                <h3 className="text-lg md:text-xl font-bold text-slate-800 flex items-center gap-2"><Icon name="map-pin" className="text-indigo-500 w-5 h-5"/> 指定座位</h3>
+                                <button onClick={() => setShowFixedSeatModal(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors"><Icon name="x" size={20}/></button>
+                            </div>
+                            <div className="flex justify-center p-2 md:p-4 bg-slate-50 rounded-xl border border-slate-200 overflow-y-auto scroll-container custom-scrollbar">
+                                <SeatingGrid rows={rows} cols={cols} frontRowsCount={frontRowsCount} unavailableSeats={unavailableSeats} mode="select-fixed" fixedAssignments={fixedAssignments} onSeatClick={handleFixedSeatSelect} />
+                            </div>
+                            <div className="flex justify-end gap-3 mt-4 md:mt-6 pt-3 md:pt-4 border-t border-slate-100">
+                                <button onClick={() => setShowFixedSeatModal(false)} className="w-full md:w-auto px-6 py-3 md:py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition">取消</button>
+                            </div>
+                        </div>
+                    </div>
+                    )}
+                    
+                    {showResetConfirmModal && (
+                    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 max-w-md w-full text-center animate-[fadeIn_0.2s_ease-out]">
+                        <div className="w-12 h-12 md:w-16 md:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="alert-triangle" className="text-red-600" size={28}/></div>
+                        <h3 className="text-xl md:text-2xl font-bold text-slate-900 mb-2">確定要重新開始？</h3>
+                        <p className="text-sm md:text-base text-slate-500 mb-6 md:mb-8 font-medium">此操作將清除所有名單、設定與排好的座位表，且無法復原。</p>
+                        <div className="flex gap-3 justify-center">
+                            <button onClick={() => setShowResetConfirmModal(false)} className="flex-1 px-4 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-50 transition shadow-sm text-sm">取消</button>
+                            <button onClick={resetAppToInitialState} className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-700 shadow-md transition text-sm">確定清除</button>
+                        </div>
+                        </div>
+                    </div>
+                    )}
+
+                    {showCloudModal && (
+                    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden border border-slate-100 animate-[fadeIn_0.2s_ease-out] max-h-[95vh]">
+                            <div className="flex border-b border-slate-200 bg-slate-50">
+                                <button onClick={() => setCloudMode('save')} className={`flex-1 py-3 md:py-4 text-xs md:text-sm font-bold flex items-center justify-center gap-1.5 md:gap-2 transition-colors ${cloudMode === 'save' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'}`}><Icon name="save" size={16}/> 儲存</button>
+                                <button onClick={async () => { setCloudMode('load'); await fetchCloudProjects(); }} className={`flex-1 py-3 md:py-4 text-xs md:text-sm font-bold flex items-center justify-center gap-1.5 md:gap-2 transition-colors ${cloudMode === 'load' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'}`}><Icon name="upload" size={16}/> 載入</button>
+                                <button onClick={() => setShowCloudModal(false)} className="px-3 md:px-4 text-slate-400 hover:text-slate-600 bg-slate-50 hover:bg-slate-100 transition-colors"><Icon name="x" size={18}/></button>
+                            </div>
+
+                            <div className="p-4 md:p-6 overflow-y-auto custom-scrollbar flex-grow">
+                            {cloudMode === 'save' && (
+                                <div className="space-y-4 md:space-y-5">
+                                    <div className="bg-indigo-50 p-3 md:p-4 rounded-xl flex items-start gap-2 md:gap-3 text-indigo-800 border border-indigo-100 shadow-sm">
+                                    <Icon name="database" size={18} className="flex-shrink-0 mt-0.5" /> 
+                                    <div>
+                                        <p className="font-bold mb-1 text-sm md:text-base">安全同步至您的專屬資料庫</p>
+                                        <p className="opacity-90 leading-relaxed font-medium text-xs md:text-sm">座位表將保存在雲端，僅您本人憑帳號密碼可讀取。</p>
+                                    </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs md:text-sm font-bold text-slate-700 mb-1.5 md:mb-2 ml-1">請為此座位表命名</label>
+                                        <input type="text" value={saveProjectName} onChange={(e) => setSaveProjectName(e.target.value)} className="w-full p-3 md:p-3.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all bg-slate-50 focus:bg-white font-semibold text-base md:text-sm" placeholder="例如：七年三班 第一次段考" />
+                                    </div>
+                                    <button onClick={handleCloudSave} disabled={isCloudLoading || !saveProjectName.trim()} className="w-full py-3.5 md:py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all disabled:bg-slate-300 flex justify-center items-center gap-2 shadow-md text-sm md:text-base">
+                                        {isCloudLoading ? <Icon name="loader" className="animate-spin" size={18}/> : <Icon name="save" size={18} />} 確認儲存
+                                    </button>
+                                </div>
+                            )}
+
+                            {cloudMode === 'load' && (
+                                <div className="space-y-3 md:space-y-4 min-h-[200px] md:min-h-[250px]">
+                                    {isCloudLoading ? (
+                                        <div className="flex flex-col items-center justify-center py-12 md:py-16 text-slate-400 gap-3"><Icon name="loader" className="animate-spin text-indigo-500" size={32}/> <p className="font-bold text-sm">連線中...</p></div>
+                                    ) : cloudProjects.length === 0 ? (
+                                        <div className="text-center py-12 md:py-16 text-slate-400"><Icon name="cloud-off" size={40} className="mx-auto mb-3 md:mb-4 opacity-30"/> <p className="font-bold text-sm">目前沒有雲端存檔。</p></div>
+                                    ) : (
+                                        <div className="space-y-2 md:space-y-3">
+                                        {cloudProjects.map((p, idx) => (
+                                            <div key={p.id || idx} className="p-3 md:p-4 border border-slate-200 rounded-xl hover:border-indigo-300 hover:shadow-md transition-all flex justify-between items-center group cursor-pointer bg-white" onClick={() => handleLoadProject(p.data)}>
+                                                <div className="flex-grow pr-3 md:pr-4">
+                                                    <div className="font-extrabold text-slate-800 text-sm md:text-lg mb-0.5 md:mb-1 group-hover:text-indigo-600 transition-colors">{p.name || '未命名專案'}</div>
+                                                    <div className="text-[10px] md:text-xs font-semibold text-slate-400 flex items-center gap-1"><Icon name="clock" size={10}/> {new Date(p.timestamp).toLocaleString()}</div>
+                                                </div>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteProject(p.id); }} className="p-2 md:p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors tooltip relative z-10 border border-transparent hover:border-red-200" title="永久刪除此紀錄"><Icon name="trash-2" size={16} /></button>
+                                            </div>
+                                        ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            <div className="border-t border-slate-100 pt-4 md:pt-6 mt-4 md:mt-6">
+                                <div className="flex items-center gap-3 md:gap-4 mb-3 md:mb-4">
+                                    <div className="h-px bg-slate-200 flex-grow"></div>
+                                    <span className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider">本機備用方案</span>
+                                    <div className="h-px bg-slate-200 flex-grow"></div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 md:gap-3">
+                                    <button onClick={handleFileDownload} className="py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl flex justify-center items-center gap-1.5 md:gap-2 text-xs md:text-sm font-bold transition shadow-sm"><Icon name="file-json" size={14} /> 匯出 JSON</button>
+                                    <label className="py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl flex justify-center items-center gap-1.5 md:gap-2 text-xs md:text-sm font-bold cursor-pointer transition shadow-sm">
+                                        <Icon name="file-json" size={14} /> 匯入 JSON
+                                        <input type="file" accept=".json" className="hidden" onChange={handleFileUpload} ref={fileInputRef} />
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            </div>
+                            <div className="p-3 md:p-4 border-t border-slate-100 bg-slate-50 shrink-0">
+                                <button onClick={() => setShowCloudModal(false)} className="w-full py-2.5 md:py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-100 transition shadow-sm flex items-center justify-center gap-2 text-sm md:text-base">
+                                    關閉視窗
+                                </button>
+                            </div>
+                            
+                        </div>
+                    </div>
+                    )}
+                </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<SeatingAppMain />);
+    </script>
+</body>
+</html>
